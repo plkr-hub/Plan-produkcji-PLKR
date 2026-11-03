@@ -525,40 +525,43 @@ function estimatePrices(d,sunny=0.5){
   return p;
 }
 
-// Oficjalne RCE z API PSE (dane 15-minutowe uśredniane do godzin)
+let publishedPriceCache=null, publishedPriceCacheAt=0;
+async function loadPublishedPriceCache(){
+  if(publishedPriceCache&&Date.now()-publishedPriceCacheAt<60000) return publishedPriceCache;
+  try{
+    const res=await fetch(`prices.json?ts=${Date.now()}`,{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    publishedPriceCache=await res.json(); publishedPriceCacheAt=Date.now();
+  }catch(e){ publishedPriceCache=null; }
+  return publishedPriceCache;
+}
+
+// Dane PSE są publikowane przez GitHub Actions, aby ominąć ograniczenie CORS API PSE.
 async function fetchPSEPricesForWeek(){
-  let ok=0;
-  await Promise.all(Object.keys(weekForecast).map(async d=>{
-    try{
-      let url=`https://api.raporty.pse.pl/api/rce-pln?$filter=${encodeURIComponent("doba eq '"+d+"'")}`;
-      let rows=[];
-      for(let guard=0;url&&guard<5;guard++){
-        const res=await fetch(url); if(!res.ok) return;
-        const j=await res.json(); rows=rows.concat(j.value||[]); url=j['@odata.nextLink']||null;
-      }
-      if(rows.length<20) return;
-      const sum=Array(24).fill(0), cnt=Array(24).fill(0);
-      rows.forEach(r=>{
-        const m=(r.dtime||'').match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/); const p=parseFloat(r.rce_pln);
-        if(!m||isNaN(p)) return;
-        // dtime = koniec okresu; minuty od początku doby
-        const dayDiff=Math.round((Date.UTC(+m[1],+m[2]-1,+m[3])-Date.UTC(+d.slice(0,4),+d.slice(5,7)-1,+d.slice(8,10)))/86400000);
-        const mins=dayDiff*1440+(+m[4])*60+(+m[5]);
-        const h=Math.floor((mins-1)/60); if(h<0||h>23) return;
-        sum[h]+=p; cnt[h]++;
-      });
-      if(cnt.filter(c=>c>0).length>=20){
-        weekForecast[d].pricesMWh=sum.map((s,h)=>cnt[h]?+(s/cnt[h]).toFixed(2):weekForecast[d].pricesMWh[h]);
-        weekForecast[d].isOfficialPSE=true; ok++;
-      }
-    }catch(e){}
-  }));
+  const cache=await loadPublishedPriceCache(); let ok=0;
+  Object.entries(cache?.electricity||{}).forEach(([d,entry])=>{
+    const prices=entry&&entry.pricesMWh;
+    if(!weekForecast[d]||!Array.isArray(prices)||prices.length!==24) return;
+    const estimate=weekForecast[d].pricesMWh||estimatePrices(d);
+    weekForecast[d].pricesMWh=prices.map((p,h)=>Number.isFinite(p)?p:estimate[h]);
+    weekForecast[d].isOfficialPSE=(entry.hours??prices.filter(Number.isFinite).length)>=20;
+    if(weekForecast[d].isOfficialPSE) ok++;
+  });
   return {ok};
 }
 
 // Gaz TGE – próba odczytu indeksu z tge.pl (przez publiczny proxy CORS); w razie niepowodzenia ostatnia zapisana wartość
 // Wyszukuje cenę gazu (PLN/MWh) w tekście/HTML strony TGE
 function parseGasFromText(txt){
+  const label=/<b\b[^>]*>\s*TGEgasDA\s*<\/b>/ig; let match;
+  while((match=label.exec(txt))){
+    const start=txt.lastIndexOf('<tr',match.index), end=txt.indexOf('</tr>',match.index);
+    if(start<0||end<0) continue;
+    const cells=[...txt.slice(start,end+5).matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)]
+      .map(cell=>cell[1].replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim());
+    const v=parseFloat((cells[2]||'').replace(',','.'));
+    if(v>=30&&v<=1500) return v;
+  }
   const plain=txt.replace(/<script[\s\S]*?<\/script>/gi,' ').replace(/<style[\s\S]*?<\/style>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ');
   for(const k of ['TGEgasDA','Kurs fixingu','Kurs średni','Indeks']){
     let from=0;
@@ -572,6 +575,13 @@ function parseGasFromText(txt){
   return null;
 }
 async function fetchGasTGE(){
+  const cache=await loadPublishedPriceCache();
+  const cachedPrice=Number(cache?.gas?.priceMWh);
+  if(cachedPrice>=30&&cachedPrice<=1500){
+    const ts=Date.parse(cache.gas.updatedAt||cache.generatedAt)||Date.now();
+    $('gas-tge-mwh').value=cachedPrice; lsSet('energyplaner_gas_last',{v:cachedPrice,ts,src:'TGEgasDA cache'});
+    return {msg:`✅ gaz TGE: ${cachedPrice} zł/MWh (cache ${new Date(ts).toLocaleTimeString('pl-PL')})`};
+  }
   const proxy=($('gas-proxy-url').value||'').trim().replace(/\/$/,'');
   const pages=['https://tge.pl/gaz-rdn','https://tge.pl/gas-dam'];
   const routes=[];

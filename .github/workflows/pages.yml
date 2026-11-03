@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  schedule:
+    - cron: '17 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -28,6 +30,8 @@ jobs:
         uses: actions/configure-pages@v5
         with:
           enablement: true
+      - name: Refresh energy prices
+        run: node scripts/update-prices.mjs
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
