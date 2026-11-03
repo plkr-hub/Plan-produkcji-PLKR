@@ -178,6 +178,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
     <div class="controls">
       <button class="btn-success" onclick="saveDailyRecordToStats()">💾 Zapisz dobę do statystyk</button>
       <button class="btn-primary" onclick="savePlannedWeek()">📅 Zaplanuj i zapisz 7 dni</button>
+      <button onclick="copyPlanToNextDay()">📋 Kopiuj plan na jutro</button>
       <button onclick="exportScheduleCSV()">📥 CSV</button>
     </div>
   </div>
@@ -333,10 +334,12 @@ const SHIFTS = {
   3:{name:'Zmiana III (22-06)',hours:[22,23,0,1,2,3,4,5],icon:'🌙'}
 };
 const LS_STATS='energyplaner_kornica_stats_v2', LS_PVACT='energyplaner_pv_actual_v1', LS_PVLIVE='energyplaner_pv_live_v1', LS_CFG='energyplaner_cfg_v1';
+const LS_PLANS='energyplaner_kornica_plans_v1', LS_PARAMS='energyplaner_kornica_params_v1';
 
 let selectedDateStr = '';
 let weekForecast = {};   // date -> {hours:[{irrWm2,cloudPct,tempC}], pricesMWh:[24], isOfficialPSE}
 let plans = {};          // date -> rows (zachowuje ręczne zmiany)
+let storedPlans = {};
 let hourlyData = [];
 let charts = {};
 let statsView = 'day';
@@ -416,8 +419,10 @@ async function dbExport(){
 // ---------- Inicjalizacja ----------
 window.addEventListener('DOMContentLoaded', async () => {
   await dbInit();
+  storedPlans=lsGet(LS_PLANS,{});
   if(location.protocol.startsWith('http')) $('gas-proxy-url').value=location.origin;
   buildProductParams();
+  restoreUserParams();
   buildScadaUI();
   const cfg = lsGet(LS_CFG,{});
   ['live-url','live-path','live-unit','live-interval','live-auth'].forEach(id=>{ if(cfg[id]!==undefined) $(id).value=cfg[id]; });
@@ -442,6 +447,22 @@ function buildProductParams(){
       <label>Cel (t/dobę) <input type="number" id="p-target-${id}" value="${m.target}" step="1" oninput="updateCalculations()"></label>
     </div>`;
   }).join('');
+}
+
+function restoreUserParams(){
+  const saved=lsGet(LS_PARAMS,{});
+  ['pv-peak-power','max-price-threshold','load-standby','elec-extra','gas-tge-mwh','gas-extra','gas-standby',
+    ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])]
+    .forEach(id=>{ if(saved[id]!==undefined) $(id).value=saved[id]; });
+  if(typeof saved.forceTargets==='boolean') $('force-targets').checked=saved.forceTargets;
+}
+function persistUserParams(){
+  try{
+    const ids=['pv-peak-power','max-price-threshold','load-standby','elec-extra','gas-tge-mwh','gas-extra','gas-standby',
+      ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])];
+    const saved={}; ids.forEach(id=>saved[id]=$(id).value); saved.forceTargets=$('force-targets').checked;
+    localStorage.setItem(LS_PARAMS,JSON.stringify(saved));
+  }catch(e){}
 }
 
 function getParams(){
@@ -664,12 +685,47 @@ function newRows(d){
   }
   refreshEnv(rows,d); return rows;
 }
+function applyScheduleRows(sourceRows,targetRows){
+  const byHour=new Map(sourceRows.map(r=>[r.hour,r]));
+  targetRows.forEach(r=>{
+    const source=byHour.get(r.hour); if(!source) return;
+    r.p1=PROD_IDS.includes(source.p1)?source.p1:''; r.p2=PROD_IDS.includes(source.p2)?source.p2:'';
+    r.q1=Number(source.q1)||0; r.q2=Number(source.q2)||0;
+    r.task=[r.p1,r.p2].filter(Boolean).map(id=>PROD_META[id].name).join(' + ')||'Postój ekonomiczny';
+  });
+}
+function restorePlan(d){
+  const rows=newRows(d); applyScheduleRows(storedPlans[d]||[],rows); return rows;
+}
+function persistPlans(){
+  try{
+    Object.entries(plans).forEach(([d,rows])=>{
+      storedPlans[d]=rows.map(({hour,p1,p2,q1,q2,task})=>({hour,p1,p2,q1,q2,task}));
+    });
+    localStorage.setItem(LS_PLANS,JSON.stringify(storedPlans));
+  }catch(e){}
+}
 function loadDay(d){
   ensureForecast();
-  if(!plans[d]){ plans[d]=newRows(d); optimizeRows(plans[d],getParams()); }
+  if(!plans[d]){
+    plans[d]=storedPlans[d]?restorePlan(d):newRows(d);
+    if(!storedPlans[d]){
+      const previous=dateObj(d); previous.setDate(previous.getDate()-1);
+      const previousDate=formatDate(previous);
+      const source=plans[previousDate]||(storedPlans[previousDate]?restorePlan(previousDate):null);
+      if(source) applyScheduleRows(source,plans[d]);
+      else optimizeRows(plans[d],getParams());
+    }
+  }
   else refreshEnv(plans[d],d);
   hourlyData=plans[d];
   renderWeekCards(); updateCalculations(); renderPvCompare();
+}
+function copyPlanToNextDay(){
+  const next=dateObj(selectedDateStr); next.setDate(next.getDate()+1);
+  const d=formatDate(next), target=plans[d]||newRows(d);
+  applyScheduleRows(hourlyData,target); plans[d]=target; refreshEnv(target,d); persistPlans();
+  selectDayFromCard(d);
 }
 
 // ---------- Optymalizacja (do 2 produktów na godzinę) ----------
@@ -743,6 +799,7 @@ function buildRecord(rows,P,d){
 
 function updateCalculations(){
   const P=getParams(); calcRows(hourlyData,P);
+  persistPlans(); persistUserParams();
   $('gas-m3-info').innerText=`= ${P.gasM3Price.toFixed(3)} zł/m³`;
   const rec=buildRecord(hourlyData,P,selectedDateStr); lastDayAgg=rec;
   const recH=hourlyData.filter(r=>r.isRecommended).length;
