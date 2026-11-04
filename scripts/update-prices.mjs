@@ -80,20 +80,27 @@ async function fetchPseHistory(startDate, endDate) {
     const monthStart = month.toISOString().slice(0, 10) < startDate ? startDate : month.toISOString().slice(0, 10);
     const nextMonth = new Date(Date.UTC(month.getUTCFullYear(), month.getUTCMonth() + 1, 0));
     const monthEnd = nextMonth.toISOString().slice(0, 10) > endDate ? endDate : nextMonth.toISOString().slice(0, 10);
-    let skip = 0;
+    let nextUrl = null;
+    let page = 0;
     while (true) {
-      const url = new URL(PSE_URL);
-      url.searchParams.set('$filter', `business_date ge '${monthStart}' and business_date le '${monthEnd}'`);
-      url.searchParams.set('$select', 'business_date,dtime,rce_pln');
-      url.searchParams.set('$first', '5000');
-      url.searchParams.set('$skip', String(skip));
+      const url = nextUrl ? new URL(nextUrl, PSE_URL) : new URL(PSE_URL);
+      if (!nextUrl) {
+        url.searchParams.set('$filter', `business_date ge '${monthStart}' and business_date le '${monthEnd}'`);
+        url.searchParams.set('$select', 'business_date,dtime,rce_pln');
+        url.searchParams.set('$first', '5000');
+      }
       const response = await fetch(url);
       if (!response.ok) throw new Error(`PSE history HTTP ${response.status} (${monthStart})`);
-      const rows = (await response.json()).value || [];
+      const data = await response.json();
+      const rows = data.value || [];
       Object.assign(history, aggregatePseRows(rows));
-      if (rows.length < 5000) break;
-      skip += rows.length;
-      if (skip >= 50000) throw new Error(`PSE history page limit reached (${monthStart})`);
+      nextUrl = data['@odata.nextLink'] || data.nextLink || null;
+      page++;
+      if (!nextUrl) {
+        if (rows.length >= 5000) throw new Error(`PSE history missing continuation link (${monthStart})`);
+        break;
+      }
+      if (page >= 20) throw new Error(`PSE history page limit reached (${monthStart})`);
     }
   }
   return history;
