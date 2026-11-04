@@ -73,7 +73,7 @@ const prices = {
   gas: { priceMWh: null, updatedAt: null }
 };
 
-for (const date of [-2, -1, 0].map(offset => shiftDate(today, offset))) {
+for (const date of [-2, -1, 0, 1].map(offset => shiftDate(today, offset))) {
   try {
     prices.electricity[date] = await fetchPseDay(date);
     console.log(`PSE ${date}: ${prices.electricity[date].hours}/24 godzin`);
