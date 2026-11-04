@@ -146,6 +146,10 @@ body.auth-locked .container{visibility:hidden}
   <p class="note" style="margin-bottom:6px">Model oparty o godzinowe ceny historyczne PSE RCE oraz prognozę pogody Open-Meteo. To szacunek, nie oficjalna oferta ani publikacja PSE; oficjalne ceny są oznaczone osobno. Gaz nie jest prognozowany bez oficjalnych danych terminowych.</p>
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
+  <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
+  <p class="note" style="margin-bottom:6px">Plan uwzględnia cele dobowe, limit dwóch produktów jednocześnie, cenę energii i PV zmniejszające pobór z sieci. Produkcja jest kierowana w godziny poniżej limitu; godziny z dużą nadwyżką PV mogą być opłacalne także powyżej limitu.</p>
+  <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
+  <p class="note" id="market-production-status" style="margin-top:5px"></p>
 </div>
 
 <div class="panel">
@@ -172,7 +176,7 @@ body.auth-locked .container{visibility:hidden}
     <div class="param-group">
       <strong style="color:var(--primary)">⚡ PRĄD &amp; PV:</strong>
       <label style="color:var(--solar);font-weight:700">☀️ PV (kWp) <input type="number" id="pv-peak-power" value="500" step="10" oninput="recalcPVAndRender()"></label>
-      <label>Max cena (zł/MWh) <input type="number" id="max-price-threshold" value="800" step="10" style="color:var(--green);font-weight:700" oninput="updateCalculations()"></label>
+      <label>Max cena (zł/MWh) <input type="number" id="max-price-threshold" value="800" step="10" style="color:var(--green);font-weight:700" oninput="updateCalculations();updateMarketThreshold()"></label>
       <label>Postój zakładu (kW) <input type="number" id="load-standby" value="45" step="5" oninput="updateCalculations()"></label>
       <label title="Opłaty dystrybucyjne, akcyza itp. doliczane do ceny RCE">Dopłata prąd (zł/MWh) <input type="number" id="elec-extra" value="0" step="10" oninput="updateCalculations()"></label>
     </div>
@@ -892,6 +896,7 @@ function updateCalculations(){
   $('stat-total-cost').innerText=`${fmt(rec.totalCost,2)} zł`;
   $('stat-unit-cost').innerText=`Koszt jedn.: ${fmt(rec.qty>0?rec.totalCost/rec.qty:0,2)} zł/t`;
   renderScadaKpi(rec);
+  renderForecastProductionChart(P);
   renderShiftCards(rec,P); renderProductDay(rec); renderHourlyTable(P); renderMainChart(P);
 }
 
@@ -1080,7 +1085,8 @@ function renderMarketCharts(){
     mkChart('marketHistoryChart',{type:'bar',data:{labels,datasets:[
       {type:'line',label:'Prąd PSE RCE (zł/MWh)',data:electricity,borderColor:'#2563eb',backgroundColor:'#2563eb',pointRadius:marketView==='day'?2:1,spanGaps:false,yAxisID:'yPrice',tension:.25},
       {type:'line',label:'Gaz TGEgasDA (zł/MWh)',data:gas,borderColor:'#0891b2',backgroundColor:'#0891b2',pointRadius:marketView==='day'?0:2,spanGaps:false,yAxisID:'yPrice',tension:.2},
-      {type:'bar',label:'Produkcja PV rzeczywista (kWh)',data:pv,backgroundColor:'rgba(217,119,6,.55)',borderColor:'#d97706',yAxisID:'yPv'}]},
+      {type:'bar',label:'Produkcja PV rzeczywista (kWh)',data:pv,backgroundColor:'rgba(217,119,6,.55)',borderColor:'#d97706',yAxisID:'yPv'},
+      {type:'line',label:`Cena maksymalna (${num('max-price-threshold',800)} zł/MWh)`,data:Array(labels.length).fill(num('max-price-threshold',800)),borderColor:'#dc2626',borderDash:[7,5],borderWidth:2,pointRadius:0,spanGaps:true,yAxisID:'yPrice'}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{yPrice:{position:'left',title:{display:true,text:'Cena (zł/MWh)'}},yPv:{position:'right',title:{display:true,text:'PV (kWh)'},grid:{drawOnChartArea:false}}}}});
     const today=todayStr();
     const dates=Object.keys(weekForecast).filter(date=>date>=today).sort().slice(0,14);
@@ -1097,9 +1103,79 @@ function renderMarketCharts(){
     $('market-forecast-status').innerText=`${officialCount} dób / ${officialHours} godz.: cena oficjalna PSE • ${manualCount} dób: cena wpisana ręcznie • ${modelHours} godz.: model historyczny/pogodowy${fallbackHours>0?` • ${fallbackHours} godz.: profil awaryjny` : ''}${cache.generatedAt?` • dane odświeżone ${new Date(cache.generatedAt).toLocaleString('pl-PL')}`:''}`;
     mkChart('marketForecastChart',{type:'bar',data:{labels:forecastLabels,datasets:[
       {type:'line',label:'Cena prądu (zł/MWh)',data:forecastRows.map(row=>row.price),borderColor:'#2563eb',backgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointBackgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointRadius:2,yAxisID:'yPrice',tension:.2},
-      {type:'bar',label:'Prognoza PV (kWh/h)',data:forecastRows.map(row=>row.pv),backgroundColor:'rgba(217,119,6,.28)',borderColor:'#d97706',yAxisID:'yPv'}]},
+      {type:'bar',label:'Prognoza PV (kWh/h)',data:forecastRows.map(row=>row.pv),backgroundColor:'rgba(217,119,6,.28)',borderColor:'#d97706',yAxisID:'yPv'},
+      {type:'line',label:`Limit akceptacji (${num('max-price-threshold',800)} zł/MWh)`,data:Array(forecastRows.length).fill(num('max-price-threshold',800)),borderColor:'#dc2626',borderDash:[7,5],borderWidth:2,pointRadius:0,yAxisID:'yPrice'}]},
       options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{ticks:{callback:(value,index)=>index%24===0?forecastLabels[index]:''}},yPrice:{position:'left',title:{display:true,text:'Cena (zł/MWh)'}},yPv:{position:'right',title:{display:true,text:'PV (kWh/h)'},grid:{drawOnChartArea:false}}}}});
+    renderForecastProductionChart(getParams());
   });
+}
+
+function updateMarketThreshold(){
+  const threshold=num('max-price-threshold',800);
+  ['marketHistoryChart','marketForecastChart','marketProductionChart'].forEach(id=>{
+    const chart=charts[id];
+    if(!chart) return;
+    const dataset=chart.data.datasets.find(ds=>ds.label?.startsWith('Cena maksymalna (')||ds.label?.startsWith('Limit akceptacji ('));
+    if(dataset){
+      dataset.label=`${id==='marketHistoryChart'?'Cena maksymalna':'Limit akceptacji'} (${threshold} zł/MWh)`;
+      dataset.data=Array(chart.data.labels.length).fill(threshold);
+      chart.update();
+    }
+  });
+}
+
+function renderForecastProductionChart(P=getParams()){
+  const dates=Object.keys(weekForecast).filter(date=>date>=todayStr()).sort().slice(0,14);
+  const rowsByDate=dates.map(date=>{
+    const rows=newRows(date);
+    optimizeRows(rows,{...P,force:false});
+    calcRows(rows,P);
+    return {date,rows};
+  });
+  const labels=rowsByDate.flatMap(({date})=>Array.from({length:24},(_,hour)=>`${date.slice(5)} ${String(hour).padStart(2,'0')}:00`));
+  const flattened=rowsByDate.flatMap(day=>day.rows);
+  const threshold=P.maxPrice;
+  const datasets=PROD_IDS.map(id=>({
+    type:'bar',
+    label:`${PROD_META[id].name} (t/h)`,
+    data:flattened.map(row=>(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0)),
+    backgroundColor:PROD_META[id].color,
+    stack:'production',
+    yAxisID:'yProduction'
+  }));
+  datasets.push({
+    type:'line',
+    label:'Cena energii (zł/MWh)',
+    data:flattened.map(row=>row.priceMWh),
+    borderColor:'#2563eb',
+    pointRadius:0,
+    borderWidth:1.5,
+    tension:.2,
+    yAxisID:'yPrice'
+  },{
+    type:'line',
+    label:`Limit akceptacji (${threshold} zł/MWh)`,
+    data:Array(flattened.length).fill(threshold),
+    borderColor:'#dc2626',
+    borderDash:[7,5],
+    borderWidth:2,
+    pointRadius:0,
+    yAxisID:'yPrice'
+  });
+  mkChart('marketProductionChart',{type:'bar',data:{labels,datasets},options:{
+    responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    scales:{
+      x:{stacked:true,ticks:{callback:(value,index)=>index%24===0?labels[index]:''}},
+      yProduction:{stacked:true,title:{display:true,text:'Produkcja (t/h)'},beginAtZero:true},
+      yPrice:{position:'right',title:{display:true,text:'Cena (zł/MWh)'},grid:{drawOnChartArea:false}}
+    }
+  }});
+  const totalByProduct={};
+  PROD_IDS.forEach(id=>totalByProduct[id]=flattened.reduce((sum,row)=>sum+(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0));
+  const scheduledHours=flattened.filter(row=>row.p1||row.p2).length;
+  const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
+  const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
+  $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
 }
 
 // ---------- Ręczne ceny ----------
