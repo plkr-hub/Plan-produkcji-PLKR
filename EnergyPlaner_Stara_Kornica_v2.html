@@ -1325,6 +1325,8 @@ function renderForecastProductionChart(P=getParams()){
     ['calcipril','granucal'].forEach(id=>{
       const produced=rows.reduce((sum,row)=>sum
         +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0);
+      const productCost=rows.reduce((sum,row)=>sum+(row.alloc?.[id]?.cost||0),0);
+      const costPerTon=produced>0?productCost/produced:null;
       const available=projectedStock[id]+produced;
       const hasOrders=inventory.orders[id]>0;
       const demand=hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
@@ -1332,7 +1334,7 @@ function renderForecastProductionChart(P=getParams()){
       const shortage=Math.max(0,demand-fulfilled);
       if(hasOrders) remainingOrders[id]=Math.max(0,remainingOrders[id]-fulfilled);
       const ending=Math.max(0,available-fulfilled);
-      inventoryRows.push({date,id,start:projectedStock[id],produced,demand,fulfilled,
+      inventoryRows.push({date,id,start:projectedStock[id],produced,costPerTon,demand,fulfilled,
         remaining:remainingOrders[id],ending,shortage});
       projectedStock[id]=ending;
     });
@@ -1382,9 +1384,9 @@ function renderForecastProductionChart(P=getParams()){
   const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
   const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
   $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
-  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Przewidywane odbiory</th><th>Pozostałe zamówienie</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
+  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Prognozowany koszt (zł/t)</th><th>Przewidywane odbiory</th><th>Pozostałe zamówienie</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
     <td>${item.date}</td><td style="color:${PROD_META[item.id].color};font-weight:700">${PROD_META[item.id].name}</td>
-    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${fmt(item.fulfilled,1)} t</td>
+    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${item.costPerTon===null?'–':`${fmt(item.costPerTon,2)} zł/t`}</td><td>${fmt(item.fulfilled,1)} t</td>
     <td>${fmt(item.remaining,1)} t</td><td>${fmt(item.ending,1)} t</td>
     <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t na odbiór`:inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
   </tr>`).join('')}</tbody></table>`;
