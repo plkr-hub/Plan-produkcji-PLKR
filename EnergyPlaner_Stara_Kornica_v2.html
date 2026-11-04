@@ -156,7 +156,7 @@ body.auth-locked .container{visibility:hidden}
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
-  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić tylko przy cenie do 200 zł/MWh ponad limit. Powyżej tego pułapu planowany jest postój.</p>
+  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić do 200 zł/MWh ponad limit. Wyższa cena jest dopuszczona tylko wtedy, gdy PV obniża efektywny koszt energii z sieci do limitu.</p>
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
@@ -1404,6 +1404,10 @@ function planForecastProductionDay(rows,P){
     const gridShare=Math.max(0,load-row.pvKwh)/load;
     return (row.priceMWh+P.elecExtra)*gridShare;
   };
+  const pvCompensated=(hour,id)=>hourCost(hour,id)<=P.maxPrice;
+  const regularPriceAllowed=(hour,id)=>rows[hour].priceMWh<=P.maxPrice||pvCompensated(hour,id);
+  const bridgePriceAllowed=(hour,id)=>rows[hour].priceMWh>P.maxPrice
+    &&(rows[hour].priceMWh<=P.maxPrice+200||pvCompensated(hour,id));
   const canAdd=(hour,id)=>!selected[hour].has(id)
     &&selected[hour].size<2
     &&!(competing.has(id)&&[...selected[hour]].some(other=>competing.has(other)));
@@ -1411,9 +1415,9 @@ function planForecastProductionDay(rows,P){
   while(PROD_IDS.some(id=>selectedSlots[id]<requiredSlots[id])){
     let best=null;
     rows.forEach((row,hour)=>{
-      if(!Number.isFinite(row.priceMWh)||row.priceMWh>P.maxPrice) return;
       PROD_IDS.forEach(id=>{
-        if(selectedSlots[id]>=requiredSlots[id]||!canAdd(hour,id)) return;
+        if(!Number.isFinite(row.priceMWh)||selectedSlots[id]>=requiredSlots[id]
+          ||!regularPriceAllowed(hour,id)||!canAdd(hour,id)) return;
         const score=hourCost(hour,id);
         const candidate={hour,id,score,priority:(requiredSlots[id]-selectedSlots[id])/requiredSlots[id]};
         if(!best||candidate.score<best.score
@@ -1432,13 +1436,13 @@ function planForecastProductionDay(rows,P){
     const gap=next-hour-1;
     if(next>=rows.length||gap===0||gap>2) continue;
     const gapHours=Array.from({length:gap},(_,index)=>hour+index+1);
+    const adjacentProducts=[...new Set([...selected[hour],...selected[next]])];
     if(gapHours.some(index=>!Number.isFinite(rows[index].priceMWh)
-      ||rows[index].priceMWh>P.maxPrice+200)) continue;
+      ||!adjacentProducts.some(id=>bridgePriceAllowed(index,id)))) continue;
     for(let fill=hour+1;fill<next;fill++){
-      const candidates=[...new Set([...selected[hour],...selected[next]])]
+      const candidates=adjacentProducts
         .filter(id=>Number.isFinite(rows[fill].priceMWh)
-          &&rows[fill].priceMWh>P.maxPrice
-          &&rows[fill].priceMWh<=P.maxPrice+200
+          &&bridgePriceAllowed(fill,id)
           &&canAdd(fill,id))
         .sort((a,b)=>hourCost(fill,a)-hourCost(fill,b));
       if(candidates.length){
