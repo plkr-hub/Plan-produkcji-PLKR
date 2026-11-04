@@ -143,7 +143,7 @@ body.auth-locked .container{visibility:hidden}
   <div class="chart-container"><canvas id="marketHistoryChart"></canvas></div>
   <p class="note" id="market-history-status" style="margin:5px 0 16px"></p>
   <h3 style="font-size:.95rem;margin-bottom:6px">🔮 Prognoza godzinowych cen prądu na 14 dni</h3>
-  <p class="note" style="margin-bottom:6px">Model oparty o godzinowe ceny historyczne PSE RCE oraz prognozę pogody Open-Meteo. To szacunek, nie oficjalna oferta ani publikacja PSE; oficjalne ceny są oznaczone osobno. Gaz nie jest prognozowany bez oficjalnych danych terminowych.</p>
+  <p class="note" style="margin-bottom:6px">Model korzysta wyłącznie z cen PSE RCE z bieżącego roku, z korektą pogody Open-Meteo; nie zakłada spadku poniżej średniej cen z ostatnich 30 dni dla tej samej pory i typu dnia. To szacunek, nie oficjalna oferta ani publikacja PSE; oficjalne ceny są oznaczone osobno. Gaz nie jest prognozowany bez oficjalnych danych terminowych.</p>
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
@@ -643,11 +643,17 @@ async function fetchPSEPricesForWeek(){
 function modelPriceFor(date,dayType,hour,weather,cache){
   const month=date.slice(5,7), model=cache?.priceModel||{};
   const bucket=model[`${month}-${dayType}-${hour}`]||model[`all-${dayType}-${hour}`];
-  if(!bucket||!Number.isFinite(bucket.meanPrice)) return null;
+  const recent=model[`recent-${dayType}-${hour}`];
+  if(!bucket&&!recent) return null;
+  const basePrice=Number.isFinite(bucket?.meanPrice)?bucket.meanPrice:recent?.meanPrice;
+  if(!Number.isFinite(basePrice)) return null;
   const irradiance=Number(weather?.irrWm2);
-  const delta=Number.isFinite(irradiance)?irradiance-(bucket.meanIrr||0):0;
-  const adjustment=Math.max(-bucket.meanPrice*.3,Math.min(bucket.meanPrice*.3,delta*(bucket.pricePerWm2||0)));
-  return Math.max(0,Number((bucket.meanPrice+adjustment).toFixed(2)));
+  const meanIrr=bucket?.meanIrr??recent?.meanIrr??0;
+  const pricePerWm2=bucket?.pricePerWm2??recent?.pricePerWm2??0;
+  const delta=Number.isFinite(irradiance)?irradiance-meanIrr:0;
+  const adjustment=Math.max(-basePrice*.3,Math.min(basePrice*.3,delta*pricePerWm2));
+  const recentFloor=Number.isFinite(recent?.meanPrice)?recent.meanPrice:0;
+  return Math.max(recentFloor,0,Number((basePrice+adjustment).toFixed(2)));
 }
 
 // Gaz TGE – próba odczytu indeksu z tge.pl (przez publiczny proxy CORS); w razie niepowodzenia ostatnia zapisana wartość

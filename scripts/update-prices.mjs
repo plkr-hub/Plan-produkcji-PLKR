@@ -128,9 +128,10 @@ async function fetchWeatherHistory(startDate, endDate) {
   return result;
 }
 
-function buildPriceModel(electricity, weather) {
+function buildPriceModel(electricity, weather, modelYear, recentStartDate) {
   const buckets = {};
   for (const [date, entry] of Object.entries(electricity)) {
+    if (date.slice(0, 4) !== String(modelYear)) continue;
     const irradiation = weather[date];
     if (!irradiation) continue;
     const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
@@ -138,7 +139,9 @@ function buildPriceModel(electricity, weather) {
     entry.pricesMWh.forEach((price, hour) => {
       const irradiance = irradiation[hour];
       if (!Number.isFinite(price) || !Number.isFinite(irradiance)) return;
-      for (const key of [`${date.slice(5, 7)}-${dayType}-${hour}`, `all-${dayType}-${hour}`]) {
+      const keys = [`${date.slice(5, 7)}-${dayType}-${hour}`, `all-${dayType}-${hour}`];
+      if (date >= recentStartDate) keys.push(`recent-${dayType}-${hour}`);
+      for (const key of keys) {
         const b = buckets[key] ||= { n: 0, sumPrice: 0, sumIrr: 0, sumPriceIrr: 0, sumIrr2: 0 };
         b.n++;
         b.sumPrice += price;
@@ -192,9 +195,12 @@ const generatedAt = new Date().toISOString();
 const now = new Date();
 const today = warsawDate(now);
 const historyStart = shiftDate(today, -365);
+const modelYear = Number(today.slice(0, 4));
+const recentModelStart = shiftDate(today, -30);
 const published = await loadPublishedPrices();
 const prices = {
   generatedAt,
+  priceModelYear: modelYear,
   electricity: {},
   gas: { priceMWh: null, updatedAt: null },
   history: {
@@ -217,6 +223,7 @@ for (const date of pseDates.map(offset => shiftDate(today, offset))) {
 const cachedHistory = published.history?.electricity || {};
 const historyIsFresh = Object.keys(cachedHistory).length >= 300
   && Object.keys(published.priceModel || {}).length > 0
+  && published.priceModelYear === modelYear
   && published.generatedAt
   && warsawDate(new Date(published.generatedAt)) === today;
 if (historyIsFresh) {
@@ -233,13 +240,15 @@ if (historyIsFresh) {
   }
   try {
     const weather = await fetchWeatherHistory(historyStart, shiftDate(today, -5));
-    prices.priceModel = buildPriceModel(prices.history.electricity, weather);
+    prices.priceModel = buildPriceModel(prices.history.electricity, weather, modelYear, recentModelStart);
     console.log(`Forecast model: ${Object.keys(prices.priceModel).length} profiles`);
   } catch (error) {
     console.warn(`Historical weather model unavailable: ${error.message}`);
+    prices.priceModel = published.priceModelYear === modelYear ? published.priceModel || {} : {};
+  }
+  if (!Object.keys(prices.priceModel).length && published.priceModelYear === modelYear) {
     prices.priceModel = published.priceModel || {};
   }
-  if (!Object.keys(prices.priceModel).length) prices.priceModel = published.priceModel || {};
 }
 
 try {
