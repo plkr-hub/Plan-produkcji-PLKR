@@ -382,6 +382,23 @@ body.auth-locked .container{visibility:hidden}
   </div>
 </div>
 
+<div class="modal" id="forecast-hour-modal" role="dialog" aria-modal="true" aria-labelledby="forecast-hour-title">
+  <div class="modal-content" style="max-width:480px">
+    <h3 id="forecast-hour-title">✏️ Edycja godziny prognozy</h3>
+    <p id="forecast-hour-details" class="note" style="margin:8px 0"></p>
+    <p class="note">Zaznacz maksymalnie dwa produkty. Calcipril i Granucal nie mogą być zaznaczone jednocześnie. Usuń wszystkie zaznaczenia, aby zaplanować postój.</p>
+    <div id="forecast-hour-products" class="inventory-grid"></div>
+    <p id="forecast-hour-error" class="access-error" role="alert"></p>
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <button type="button" onclick="resetForecastHourEdit()">Przywróć automat</button>
+      <div class="row" style="margin:0">
+        <button type="button" onclick="closeForecastHourEditor()">Anuluj</button>
+        <button type="button" class="btn-primary" onclick="saveForecastHourEdit()">Zastosuj</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const LAT = 52.1869, LON = 22.9469;
 const GAS_CONV = 10.972; // kWh/m3
@@ -399,6 +416,7 @@ const SHIFTS = {
 const LS_STATS='energyplaner_kornica_stats_v2', LS_PVACT='energyplaner_pv_actual_v1', LS_PVLIVE='energyplaner_pv_live_v1', LS_CFG='energyplaner_cfg_v1';
 const LS_PLANS='energyplaner_kornica_plans_v1', LS_PARAMS='energyplaner_kornica_params_v1';
 const LS_INVENTORY='energyplaner_kornica_inventory_v1';
+const LS_FORECAST_OVERRIDES='energyplaner_forecast_overrides_v1';
 
 let selectedDateStr = '';
 let weekForecast = {};   // date -> {hours:[{irrWm2,cloudPct,tempC}], pricesMWh:[24], isOfficialPSE}
@@ -409,6 +427,7 @@ let charts = {};
 let statsView = 'day';
 let lastDayAgg = null;
 let officialPriceRefreshInProgress=false;
+let editingForecastHour=null;
 
 const $ = id => document.getElementById(id);
 const num = (id, def) => { const v = parseFloat($(id).value); return isNaN(v) ? def : v; };
@@ -1352,6 +1371,7 @@ function renderForecastProductionChart(P=getParams()){
       dailyParams.products[id]={...P.products[id],target:Math.min(target,room)};
     });
     planForecastProductionDay(rows,dailyParams);
+    applyForecastHourOverrides(date,rows,dailyParams);
     calcRows(rows,dailyParams);
     ['calcipril','granucal'].forEach(id=>{
       const produced=rows.reduce((sum,row)=>sum
@@ -1403,6 +1423,14 @@ function renderForecastProductionChart(P=getParams()){
   });
   mkChart('marketProductionChart',{type:'bar',data:{labels,datasets},options:{
     responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
+    onHover:(event,elements)=>{if(event.native?.target) event.native.target.style.cursor=elements.length?'pointer':'default';},
+    onClick:(event,elements,chart)=>{
+      const points=chart.getElementsAtEventForMode(event,'index',{intersect:false},false);
+      if(!points.length) return;
+      const index=points[0].index;
+      const day=rowsByDate[Math.floor(index/24)];
+      if(day) openForecastHourEditor(day.date,index%24);
+    },
     scales:{
       x:{stacked:true,ticks:{callback:(value,index)=>index%24===0?labels[index]:''}},
       yProduction:{stacked:true,title:{display:true,text:'Produkcja (t/h)'},beginAtZero:true},
@@ -1421,6 +1449,131 @@ function renderForecastProductionChart(P=getParams()){
     <td>${fmt(item.remaining,1)} t</td><td>${fmt(item.ending,1)} t</td>
     <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t na odbiór`:inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
   </tr>`).join('')}</tbody></table>`;
+}
+
+function getForecastOverrides(){
+  const saved=lsGet(LS_FORECAST_OVERRIDES,{});
+  return saved&&typeof saved==='object'&&!Array.isArray(saved)?saved:{};
+}
+
+function isValidForecastSelection(products){
+  return Array.isArray(products)
+    &&products.length<=2
+    &&products.every(id=>PROD_IDS.includes(id))
+    &&new Set(products).size===products.length
+    &&!(products.includes('calcipril')&&products.includes('granucal'));
+}
+
+function applyForecastHourOverrides(date,rows,P){
+  const overrides=getForecastOverrides()[date];
+  if(!overrides||typeof overrides!=='object') return;
+  rows.forEach(row=>{
+    if(!Object.prototype.hasOwnProperty.call(overrides,row.hour)) return;
+    const products=overrides[row.hour];
+    if(!isValidForecastSelection(products)) return;
+    row.p1=products[0]||'';
+    row.p2=products[1]||'';
+    row.q1=row.p1?P.products[row.p1].rate:0;
+    row.q2=row.p2?P.products[row.p2].rate:0;
+    row.task=products.map(id=>PROD_META[id].name).join(' + ')||'Postój (ręcznie)';
+  });
+}
+
+function openForecastHourEditor(date,hour){
+  const chart=charts.marketProductionChart;
+  const index=Object.keys(weekForecast).filter(day=>day>=todayStr()).sort().slice(0,14)
+    .indexOf(date)*24+hour;
+  if(!chart||index<0) return;
+  const overrides=getForecastOverrides();
+  const isManual=Object.prototype.hasOwnProperty.call(overrides[date]||{},hour);
+  const selected=isManual
+    ?overrides[date][hour]
+    :PROD_IDS.filter((id,datasetIndex)=>Number(chart.data.datasets[datasetIndex]?.data[index])>0);
+  editingForecastHour={date,hour};
+  $('forecast-hour-title').textContent=`✏️ Edycja: ${date}, ${String(hour).padStart(2,'0')}:00`;
+  $('forecast-hour-details').textContent=`Cena ${fmt(weekForecast[date]?.pricesMWh?.[hour],2)} zł/MWh • plan: ${selected.length?selected.map(id=>PROD_META[id].name).join(' + '):'postój'}${isManual?' • ręczna korekta':''}`;
+  $('forecast-hour-error').textContent='';
+  const container=$('forecast-hour-products');
+  container.replaceChildren();
+  PROD_IDS.forEach(id=>{
+    const label=document.createElement('label');
+    label.className='inventory-card';
+    label.style.borderColor=PROD_META[id].color;
+    const checkbox=document.createElement('input');
+    checkbox.type='checkbox';
+    checkbox.value=id;
+    checkbox.checked=selected.includes(id);
+    checkbox.style.width='auto';
+    checkbox.addEventListener('change',()=>updateForecastHourCheckboxes(id));
+    const name=document.createElement('strong');
+    name.textContent=PROD_META[id].name;
+    name.style.color=PROD_META[id].color;
+    label.append(checkbox,name);
+    container.append(label);
+  });
+  updateForecastHourCheckboxes();
+  $('forecast-hour-modal').style.display='flex';
+}
+
+function updateForecastHourCheckboxes(changedId){
+  const checks=[...$('forecast-hour-products').querySelectorAll('input[type="checkbox"]')];
+  const selected=checks.filter(check=>check.checked);
+  const conflict=selected.some(check=>check.value==='calcipril')
+    &&selected.some(check=>check.value==='granucal');
+  if(conflict&&changedId){
+    const other=changedId==='calcipril'?'granucal':'calcipril';
+    const otherCheck=checks.find(check=>check.value===other);
+    if(otherCheck) otherCheck.checked=false;
+  }
+  const remaining=checks.filter(check=>check.checked);
+  if(remaining.length>2&&changedId){
+    const changed=checks.find(check=>check.value===changedId);
+    if(changed) changed.checked=false;
+  }
+  $('forecast-hour-error').textContent='';
+}
+
+function closeForecastHourEditor(){
+  $('forecast-hour-modal').style.display='none';
+  editingForecastHour=null;
+}
+
+function saveForecastHourEdit(){
+  if(!editingForecastHour) return;
+  const products=[...$('forecast-hour-products').querySelectorAll('input[type="checkbox"]:checked')]
+    .map(check=>check.value);
+  if(!isValidForecastSelection(products)){
+    $('forecast-hour-error').textContent='Wybierz maksymalnie dwa produkty; Calciprilu nie można łączyć z Granucalem.';
+    return;
+  }
+  const overrides=getForecastOverrides();
+  overrides[editingForecastHour.date]||={};
+  overrides[editingForecastHour.date][editingForecastHour.hour]=products;
+  try{
+    localStorage.setItem(LS_FORECAST_OVERRIDES,JSON.stringify(overrides));
+  }catch(error){
+    $('forecast-hour-error').textContent=`Nie udało się zapisać zmiany: ${error.message}`;
+    return;
+  }
+  closeForecastHourEditor();
+  renderForecastProductionChart(getParams());
+}
+
+function resetForecastHourEdit(){
+  if(!editingForecastHour) return;
+  const overrides=getForecastOverrides();
+  delete overrides[editingForecastHour.date]?.[editingForecastHour.hour];
+  if(overrides[editingForecastHour.date]&&!Object.keys(overrides[editingForecastHour.date]).length){
+    delete overrides[editingForecastHour.date];
+  }
+  try{
+    localStorage.setItem(LS_FORECAST_OVERRIDES,JSON.stringify(overrides));
+  }catch(error){
+    $('forecast-hour-error').textContent=`Nie udało się przywrócić automatycznego planu: ${error.message}`;
+    return;
+  }
+  closeForecastHourEditor();
+  renderForecastProductionChart(getParams());
 }
 
 function planForecastProductionDay(rows,P){
