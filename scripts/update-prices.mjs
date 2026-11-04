@@ -4,15 +4,23 @@ const PSE_URL = 'https://api.raporty.pse.pl/api/rce-pln';
 const TGE_URL = 'https://tge.pl/gaz-rdn';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function warsawDate() {
+function warsawDate(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/Warsaw',
     year: 'numeric',
     month: '2-digit',
     day: '2-digit'
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${values.year}-${values.month}-${values.day}`;
+}
+
+function warsawHour(date = new Date()) {
+  return Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/Warsaw',
+    hour: '2-digit',
+    hourCycle: 'h23'
+  }).format(date));
 }
 
 function shiftDate(date, offset) {
@@ -66,14 +74,16 @@ function parseTgeGas(html) {
 }
 
 const generatedAt = new Date().toISOString();
-const today = warsawDate();
+const now = new Date();
+const today = warsawDate(now);
 const prices = {
   generatedAt,
   electricity: {},
   gas: { priceMWh: null, updatedAt: null }
 };
 
-for (const date of [-2, -1, 0, 1].map(offset => shiftDate(today, offset))) {
+const pseDates = [-2, -1, 0, ...(warsawHour(now) >= 14 ? [1] : [])];
+for (const date of pseDates.map(offset => shiftDate(today, offset))) {
   try {
     prices.electricity[date] = await fetchPseDay(date);
     console.log(`PSE ${date}: ${prices.electricity[date].hours}/24 godzin`);
