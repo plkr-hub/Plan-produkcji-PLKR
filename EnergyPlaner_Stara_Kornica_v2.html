@@ -124,8 +124,33 @@ body.auth-locked .container{visibility:hidden}
 </header>
 
 <div class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px">
+    <div>
+      <h3>📊 Rynek energii i PV: historia oraz prognoza 14 dni</h3>
+      <p class="note">Ceny prądu: oficjalne dane PSE RCE. Gaz: notowania TGE gromadzone od wdrożenia. PV: tylko zarejestrowane dane rzeczywiste.</p>
+    </div>
+    <div class="controls">
+      <div class="tabs">
+        <button id="market-tab-day" class="active" onclick="setMarketView('day')">Dziennie</button>
+        <button id="market-tab-month" onclick="setMarketView('month')">Miesięcznie</button>
+        <button id="market-tab-year" onclick="setMarketView('year')">Rocznie</button>
+      </div>
+      <input type="date" id="market-date" onchange="renderMarketCharts()">
+      <input type="month" id="market-month" onchange="renderMarketCharts()" style="display:none">
+      <input type="number" id="market-year" onchange="renderMarketCharts()" style="display:none">
+    </div>
+  </div>
+  <div class="chart-container"><canvas id="marketHistoryChart"></canvas></div>
+  <p class="note" id="market-history-status" style="margin:5px 0 16px"></p>
+  <h3 style="font-size:.95rem;margin-bottom:6px">🔮 Prognoza godzinowych cen prądu na 14 dni</h3>
+  <p class="note" style="margin-bottom:6px">Model oparty o godzinowe ceny historyczne PSE RCE oraz prognozę pogody Open-Meteo. To szacunek, nie oficjalna oferta ani publikacja PSE; oficjalne ceny są oznaczone osobno. Gaz nie jest prognozowany bez oficjalnych danych terminowych.</p>
+  <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
+  <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
+</div>
+
+<div class="panel">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-    <h3>📅 Prognoza 7 dni: PV, ceny prądu (PSE RCE) i gazu (TGE)</h3>
+    <h3>📅 Prognoza 14 dni: PV, ceny prądu (PSE RCE) i gazu (TGE)</h3>
     <div class="links-bar">
       <a href="https://raporty.pse.pl/report/rce-pln" target="_blank">🔗 PSE RCE</a>
       <a href="https://tge.pl/energia-elektryczna-rdn" target="_blank">🔗 TGE prąd RDN</a>
@@ -455,6 +480,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   const now = new Date();
   $('stats-month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
   $('stats-year').value = now.getFullYear();
+  $('market-date').value = todayStr();
+  $('market-month').value = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  $('market-year').value = now.getFullYear();
   const y = new Date(); y.setDate(y.getDate()-1);
   $('pv-file-date').value = formatDate(y);
   setDayOffset(1);
@@ -521,7 +549,7 @@ async function fetchAllOnlineData(){
   const st=$('status-text'); const notes=[];
   st.innerHTML='⏳ Pobieranie pogody (Open-Meteo), cen PSE RCE i gazu TGE...';
   try{
-    const url=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=Europe%2FWarsaw&past_days=2&forecast_days=7`;
+    const url=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=Europe%2FWarsaw&past_days=2&forecast_days=14`;
     const j=await (await fetch(url)).json();
     if(j&&j.hourly){ processWeather(j.hourly); notes.push('✅ pogoda Open-Meteo'); }
   }catch(e){ notes.push('⚠️ pogoda: model zapasowy'); ensureForecast(); }
@@ -533,6 +561,7 @@ async function fetchAllOnlineData(){
   // odśwież wiersze o nowe dane
   Object.keys(plans).forEach(d=>refreshEnv(plans[d],d));
   loadDay(selectedDateStr);
+  renderMarketCharts();
 }
 
 function processWeather(h){
@@ -545,7 +574,7 @@ function processWeather(h){
 }
 function ensureForecast(){
   const base=new Date(); base.setDate(base.getDate()-2);
-  for(let k=0;k<10;k++){
+  for(let k=0;k<16;k++){
     const c=new Date(base); c.setDate(c.getDate()+k); const d=formatDate(c);
     if(!weekForecast[d]){
       const sunny=0.4+((k*19)%55)/100;
@@ -589,12 +618,32 @@ async function fetchPSEPricesForWeek(){
   Object.entries(cache?.electricity||{}).forEach(([d,entry])=>{
     const prices=entry&&entry.pricesMWh;
     if(!weekForecast[d]||!Array.isArray(prices)||prices.length!==24) return;
+    weekForecast[d].officialPriceHours=prices.map(Number.isFinite);
     const estimate=weekForecast[d].pricesMWh||estimatePrices(d);
     weekForecast[d].pricesMWh=prices.map((p,h)=>Number.isFinite(p)?p:estimate[h]);
     weekForecast[d].isOfficialPSE=(entry.hours??prices.filter(Number.isFinite).length)>=20;
     if(weekForecast[d].isOfficialPSE) ok++;
   });
+  Object.keys(weekForecast).filter(d=>d>=todayStr()&&!weekForecast[d].isManual).forEach(d=>{
+    const day=weekForecast[d], dow=dateObj(d).getDay(), dayType=dow===0||dow===6?'weekend':'weekday';
+    const estimates=estimatePrices(d);
+    const rawPrices=day.pricesMWh;
+    const modelPrices=day.hours.map((weather,h)=>day.officialPriceHours?.[h]?null:modelPriceFor(d,dayType,h,weather,cache));
+    day.modelHours=modelPrices.filter(Number.isFinite).length;
+    day.pricesMWh=modelPrices.map((price,h)=>day.officialPriceHours?.[h]?rawPrices[h]:Number.isFinite(price)?price:estimates[h]);
+    day.isModelEstimate=true;
+  });
   return {ok};
+}
+
+function modelPriceFor(date,dayType,hour,weather,cache){
+  const month=date.slice(5,7), model=cache?.priceModel||{};
+  const bucket=model[`${month}-${dayType}-${hour}`]||model[`all-${dayType}-${hour}`];
+  if(!bucket||!Number.isFinite(bucket.meanPrice)) return null;
+  const irradiance=Number(weather?.irrWm2);
+  const delta=Number.isFinite(irradiance)?irradiance-(bucket.meanIrr||0):0;
+  const adjustment=Math.max(-bucket.meanPrice*.3,Math.min(bucket.meanPrice*.3,delta*(bucket.pricePerWm2||0)));
+  return Math.max(0,Number((bucket.meanPrice+adjustment).toFixed(2)));
 }
 
 // Gaz TGE – próba odczytu indeksu z tge.pl (przez publiczny proxy CORS); w razie niepowodzenia ostatnia zapisana wartość
@@ -690,7 +739,7 @@ function pvFor(d,h,w,kWp){
 function recalcPVAndRender(){
   Object.keys(plans).forEach(d=>refreshEnv(plans[d],d));
   if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
-  renderWeekCards(); updateCalculations(); renderPvCompare();
+  renderWeekCards(); updateCalculations(); renderPvCompare(); renderMarketCharts();
 }
 
 // ---------- Wiersze godzinowe ----------
@@ -922,7 +971,7 @@ function onQtyChange(i,slot,v){ hourlyData[i]['q'+slot]=parseFloat(v)||0; update
 
 function renderWeekCards(){
   const t=todayStr(); const P=getParams();
-  const dates=Object.keys(weekForecast).filter(d=>d>=t).sort().slice(0,7);
+  const dates=Object.keys(weekForecast).filter(d=>d>=t).sort().slice(0,14);
   $('week-plan-grid').innerHTML=dates.map(d=>{
     const di=weekForecast[d]; const kWp=P.pvKwp;
     const pvs=di.hours.map((w,h)=>pvFor(d,h,w,kWp).v); const pvT=pvs.reduce((a,b)=>a+b,0);
@@ -951,18 +1000,120 @@ function renderMainChart(P){
 }
 function mkChart(id,cfg){ if(charts[id]) charts[id].destroy(); charts[id]=new Chart($(id).getContext('2d'),cfg); }
 
+let marketView='day';
+function setMarketView(view){
+  marketView=view;
+  ['day','month','year'].forEach(v=>{
+    $(`market-tab-${v}`).classList.toggle('active',v===view);
+  });
+  $('market-date').style.display=view==='day'?'':'none';
+  $('market-month').style.display=view==='month'?'':'none';
+  $('market-year').style.display=view==='year'?'':'none';
+  renderMarketCharts();
+}
+function marketPriceEntry(date,cache){
+  return cache?.history?.electricity?.[date]||cache?.electricity?.[date]||null;
+}
+function actualPvForDate(date){
+  const actual=lsGet(LS_PVACT,{})[date];
+  if(Array.isArray(actual)&&actual.some(Number.isFinite)){
+    return {hours:actual.map(v=>Number.isFinite(v)?v:null),total:actual.reduce((sum,v)=>sum+(Number.isFinite(v)?v:0),0)};
+  }
+  const live=lsGet(LS_PVLIVE,{})[date];
+  if(Array.isArray(live)&&live.some(v=>Number.isFinite(v)&&v>0)){
+    return {hours:live.map(v=>Number.isFinite(v)&&v>0?v:null),total:live.reduce((sum,v)=>sum+(Number.isFinite(v)&&v>0?v:0),0)};
+  }
+  const record=lsGet(LS_STATS,{})[date];
+  if(record?.pvSource==='rzeczywiste'&&Number.isFinite(record.pv)) return {hours:null,total:record.pv};
+  return null;
+}
+function dailyAverage(values){
+  const valid=values.filter(Number.isFinite);
+  return valid.length?valid.reduce((sum,v)=>sum+v,0)/valid.length:null;
+}
+function renderMarketCharts(){
+  loadPublishedPriceCache().then(cache=>{
+    if(!cache) cache={};
+    const gasHistory=cache.history?.gas||{};
+    let labels=[],electricity=[],gas=[],pv=[],status='';
+    if(marketView==='day'){
+      const date=$('market-date').value||todayStr(), prices=marketPriceEntry(date,cache)?.pricesMWh;
+      const pvData=actualPvForDate(date);
+      labels=Array.from({length:24},(_,h)=>`${String(h).padStart(2,'0')}:00`);
+      electricity=Array.isArray(prices)&&prices.length===24?prices:Array(24).fill(null);
+      const gasPrice=Number(gasHistory[date]);
+      gas=Array(24).fill(Number.isFinite(gasPrice)?gasPrice:null);
+      pv=pvData?.hours?.length===24?pvData.hours:Array(24).fill(null);
+      status=`${prices?'Prąd: dane PSE':'Prąd: brak opublikowanych danych dla tej doby'} • ${Number.isFinite(gasPrice)?'Gaz: TGE':'Gaz: brak zapisanego notowania TGE'} • ${pvData?'PV: dane rzeczywiste':'PV: brak danych rzeczywistych'}`;
+    }else{
+      const selectedYear=Number(marketView==='month'?($('market-month').value||todayStr().slice(0,7)).slice(0,4):$('market-year').value||new Date().getFullYear());
+      const selectedMonth=marketView==='month'?Number(($('market-month').value||todayStr().slice(0,7)).slice(5,7)):null;
+      const count=marketView==='month'?new Date(selectedYear,selectedMonth,0).getDate():12;
+      const keys=Array.from({length:count},(_,i)=>marketView==='month'
+        ?`${selectedYear}-${String(selectedMonth).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`
+        :`${selectedYear}-${String(i+1).padStart(2,'0')}`);
+      labels=marketView==='month'?keys.map(d=>d.slice(8)):keys.map(d=>new Date(`${d}-15T12:00:00Z`).toLocaleDateString('pl-PL',{month:'short'}));
+      const elecDays=keys.map(key=>{
+        const daily=marketView==='month'?marketPriceEntry(key,cache)?.pricesMWh:null;
+        if(marketView==='month') return Array.isArray(daily)?dailyAverage(daily):null;
+        const values=Object.entries(cache.history?.electricity||{}).filter(([date])=>date.startsWith(key)).flatMap(([,entry])=>entry.pricesMWh||[]);
+        return dailyAverage(values);
+      });
+      const gasDays=keys.map(key=>{
+        if(marketView==='month') return Number.isFinite(Number(gasHistory[key]))?Number(gasHistory[key]):null;
+        return dailyAverage(Object.entries(gasHistory).filter(([date])=>date.startsWith(key)).map(([,value])=>Number(value)).filter(Number.isFinite));
+      });
+      const pvActual=lsGet(LS_PVACT,{}), pvStats=lsGet(LS_STATS,{});
+      const allPvDates=[...new Set([...Object.keys(pvActual),...Object.keys(pvStats).filter(date=>pvStats[date]?.pvSource==='rzeczywiste')])];
+      const pvDays=keys.map(key=>{
+        const dates=marketView==='month'?[key]:allPvDates.filter(date=>date.startsWith(key));
+        const totals=dates.map(date=>actualPvForDate(date)?.total).filter(Number.isFinite);
+        if(marketView==='month') return actualPvForDate(key)?.total??null;
+        return totals.length?totals.reduce((sum,v)=>sum+v,0):null;
+      });
+      electricity=elecDays; gas=gasDays; pv=pvDays;
+      const gasCount=Object.keys(gasHistory).filter(date=>date.startsWith(marketView==='month'?`${selectedYear}-${String(selectedMonth).padStart(2,'0')}`:String(selectedYear))).length;
+      const pvCount=keys.reduce((sum,key)=>sum+(marketView==='month'?Number(!!actualPvForDate(key)):allPvDates.some(date=>date.startsWith(key))?1:0),0);
+      status=`Prąd: oficjalne dobowe dane PSE • Gaz: ${gasCount} dobowych notowań TGE w okresie • PV: ${pvCount} dób z danymi rzeczywistymi`;
+    }
+    $('market-history-status').innerText=status;
+    mkChart('marketHistoryChart',{type:'bar',data:{labels,datasets:[
+      {type:'line',label:'Prąd PSE RCE (zł/MWh)',data:electricity,borderColor:'#2563eb',backgroundColor:'#2563eb',pointRadius:marketView==='day'?2:1,spanGaps:false,yAxisID:'yPrice',tension:.25},
+      {type:'line',label:'Gaz TGEgasDA (zł/MWh)',data:gas,borderColor:'#0891b2',backgroundColor:'#0891b2',pointRadius:marketView==='day'?0:2,spanGaps:false,yAxisID:'yPrice',tension:.2},
+      {type:'bar',label:'Produkcja PV rzeczywista (kWh)',data:pv,backgroundColor:'rgba(217,119,6,.55)',borderColor:'#d97706',yAxisID:'yPv'}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{yPrice:{position:'left',title:{display:true,text:'Cena (zł/MWh)'}},yPv:{position:'right',title:{display:true,text:'PV (kWh)'},grid:{drawOnChartArea:false}}}}});
+    const today=todayStr();
+    const dates=Object.keys(weekForecast).filter(date=>date>=today).sort().slice(0,14);
+    const forecastRows=dates.flatMap(date=>weekForecast[date].pricesMWh.map((price,h)=>({
+      date,hour:h,price,pv:pvFor(date,h,weekForecast[date].hours[h],num('pv-peak-power',500)).v
+    })));
+    const forecastLabels=forecastRows.map(row=>`${row.date.slice(5)} ${String(row.hour).padStart(2,'0')}:00`);
+    const officialCount=dates.filter(date=>weekForecast[date].isOfficialPSE).length;
+    const manualCount=dates.filter(date=>weekForecast[date].isManual).length;
+    const modelCount=dates.length-officialCount-manualCount;
+    const modelHours=dates.reduce((sum,date)=>sum+(weekForecast[date].modelHours||0),0);
+    const officialHours=dates.reduce((sum,date)=>sum+(weekForecast[date].officialPriceHours||[]).filter(Boolean).length,0);
+    const fallbackHours=dates.length*24-officialHours-manualCount*24-modelHours;
+    $('market-forecast-status').innerText=`${officialCount} dób / ${officialHours} godz.: cena oficjalna PSE • ${manualCount} dób: cena wpisana ręcznie • ${modelHours} godz.: model historyczny/pogodowy${fallbackHours>0?` • ${fallbackHours} godz.: profil awaryjny` : ''}${cache.generatedAt?` • dane odświeżone ${new Date(cache.generatedAt).toLocaleString('pl-PL')}`:''}`;
+    mkChart('marketForecastChart',{type:'bar',data:{labels:forecastLabels,datasets:[
+      {type:'line',label:'Cena prądu (zł/MWh)',data:forecastRows.map(row=>row.price),borderColor:'#2563eb',backgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointBackgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointRadius:2,yAxisID:'yPrice',tension:.2},
+      {type:'bar',label:'Prognoza PV (kWh/h)',data:forecastRows.map(row=>row.pv),backgroundColor:'rgba(217,119,6,.28)',borderColor:'#d97706',yAxisID:'yPv'}]},
+      options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},scales:{x:{ticks:{callback:(value,index)=>index%24===0?forecastLabels[index]:''}},yPrice:{position:'left',title:{display:true,text:'Cena (zł/MWh)'}},yPv:{position:'right',title:{display:true,text:'PV (kWh/h)'},grid:{drawOnChartArea:false}}}}});
+  });
+}
+
 // ---------- Ręczne ceny ----------
 function openManualModal(){ $('modal-gas-tge').value=$('gas-tge-mwh').value; $('manual-modal').style.display='flex'; }
 function closeManualModal(){ $('manual-modal').style.display='none'; }
 function applyManualPrices(){
   const nums=$('manual-prices-input').value.trim().split(/[\s;]+/).map(v=>parseFloat(v.replace(',','.'))).filter(v=>!isNaN(v));
-  if(nums.length>=24){
-    weekForecast[selectedDateStr].pricesMWh=nums.slice(0,24); weekForecast[selectedDateStr].isOfficialPSE=true;
+  if(nums.length===24){
+    weekForecast[selectedDateStr].pricesMWh=nums.slice(0,24); weekForecast[selectedDateStr].officialPriceHours=Array(24).fill(false); weekForecast[selectedDateStr].modelHours=0; weekForecast[selectedDateStr].isOfficialPSE=false; weekForecast[selectedDateStr].isManual=true;
   } else if(nums.length===96){
-    weekForecast[selectedDateStr].pricesMWh=Array.from({length:24},(_,h)=>nums.slice(h*4,h*4+4).reduce((a,b)=>a+b,0)/4);
+    weekForecast[selectedDateStr].pricesMWh=Array.from({length:24},(_,h)=>nums.slice(h*4,h*4+4).reduce((a,b)=>a+b,0)/4); weekForecast[selectedDateStr].officialPriceHours=Array(24).fill(false); weekForecast[selectedDateStr].modelHours=0; weekForecast[selectedDateStr].isOfficialPSE=false; weekForecast[selectedDateStr].isManual=true;
   } else if(nums.length>0){ alert('Podaj 24 wartości (lub 96 dla danych 15-min).'); return; }
   const g=parseFloat($('modal-gas-tge').value); if(!isNaN(g)){ $('gas-tge-mwh').value=g; lsSet('energyplaner_gas_last',{v:g,ts:Date.now()}); }
-  closeManualModal(); refreshEnv(plans[selectedDateStr],selectedDateStr); autoOptimizeSchedule(); renderWeekCards();
+  closeManualModal(); refreshEnv(plans[selectedDateStr],selectedDateStr); autoOptimizeSchedule(); renderWeekCards(); renderMarketCharts();
 }
 
 // ---------- Moduł PV: import danych ----------
@@ -1017,7 +1168,7 @@ function clearPvActual(){ const d=$('pv-file-date').value; const all=lsGet(LS_PV
 function afterPvDataChange(d){
   if(plans[d]) refreshEnv(plans[d],d);
   if(d===selectedDateStr){ hourlyData=plans[d]||hourlyData; updateCalculations(); }
-  renderWeekCards(); renderPvCompare();
+  renderWeekCards(); renderPvCompare(); renderMarketCharts();
 }
 function renderPvCompare(){
   renderScHourly();
@@ -1348,7 +1499,7 @@ function getHistory(){ return lsGet(LS_STATS,{}); }
 function saveDailyRecordToStats(){
   const P=getParams(); calcRows(hourlyData,P);
   const h=getHistory(); h[selectedDateStr]=buildRecord(hourlyData,P,selectedDateStr); lsSet(LS_STATS,h);
-  setStatsView(statsView); alert(`Zapisano dobę ${selectedDateStr} do statystyk.`);
+  setStatsView(statsView); renderMarketCharts(); alert(`Zapisano dobę ${selectedDateStr} do statystyk.`);
 }
 function savePlannedWeek(){
   const P=getParams(); const t=todayStr(); const h=getHistory(); let n=0;
@@ -1356,9 +1507,9 @@ function savePlannedWeek(){
     if(!plans[d]){ plans[d]=newRows(d); optimizeRows(plans[d],P); }
     refreshEnv(plans[d],d); calcRows(plans[d],P); h[d]=buildRecord(plans[d],P,d); n++;
   });
-  lsSet(LS_STATS,h); setStatsView(statsView); calcRows(hourlyData,P); alert(`Zapisano plan dla ${n} dób.`);
+  lsSet(LS_STATS,h); setStatsView(statsView); calcRows(hourlyData,P); renderMarketCharts(); alert(`Zapisano plan dla ${n} dób.`);
 }
-function clearMonthlyStats(){ if(confirm('Usunąć całą historię statystyk?')){ lsSet(LS_STATS,{}); renderStats(); } }
+function clearMonthlyStats(){ if(confirm('Usunąć całą historię statystyk?')){ lsSet(LS_STATS,{}); renderStats(); renderMarketCharts(); } }
 function setStatsView(v){
   statsView=v; ['day','month','year'].forEach(k=>$('tab-'+k).classList.toggle('active',k===v));
   $('stats-month').style.display=v==='day'?'':'none'; $('stats-year').style.display=v==='month'?'':'none';
