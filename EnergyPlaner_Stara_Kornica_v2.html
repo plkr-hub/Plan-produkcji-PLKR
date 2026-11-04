@@ -408,6 +408,7 @@ let hourlyData = [];
 let charts = {};
 let statsView = 'day';
 let lastDayAgg = null;
+let officialPriceRefreshInProgress=false;
 
 const $ = id => document.getElementById(id);
 const num = (id, def) => { const v = parseFloat($(id).value); return isNaN(v) ? def : v; };
@@ -508,6 +509,10 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('pv-file-date').value = formatDate(y);
   setDayOffset(1);
   fetchAllOnlineData();
+  setInterval(refreshOfficialPriceData,5*60*1000);
+  document.addEventListener('visibilitychange',()=>{
+    if(!document.hidden) refreshOfficialPriceData();
+  });
   renderStats();
 });
 
@@ -778,8 +783,8 @@ function estimatePrices(d,sunny=0.5){
 }
 
 let publishedPriceCache=null, publishedPriceCacheAt=0;
-async function loadPublishedPriceCache(){
-  if(publishedPriceCache&&Date.now()-publishedPriceCacheAt<60000) return publishedPriceCache;
+async function loadPublishedPriceCache(force=false){
+  if(!force&&publishedPriceCache&&Date.now()-publishedPriceCacheAt<60000) return publishedPriceCache;
   try{
     const res=await fetch(`prices.json?ts=${Date.now()}`,{cache:'no-store'});
     if(!res.ok) throw new Error('HTTP '+res.status);
@@ -788,9 +793,35 @@ async function loadPublishedPriceCache(){
   return publishedPriceCache;
 }
 
+async function refreshOfficialPriceData(){
+  if(officialPriceRefreshInProgress||document.hidden) return;
+  officialPriceRefreshInProgress=true;
+  const before=JSON.stringify(Object.entries(weekForecast)
+    .filter(([date])=>date>=todayStr())
+    .map(([date,day])=>[date,day.pricesMWh,day.officialPriceHours,day.isOfficialPSE]));
+  try{
+    const result=await fetchPSEPricesForWeek(true);
+    const after=JSON.stringify(Object.entries(weekForecast)
+      .filter(([date])=>date>=todayStr())
+      .map(([date,day])=>[date,day.pricesMWh,day.officialPriceHours,day.isOfficialPSE]));
+    if(before===after) return;
+    Object.keys(plans).forEach(date=>refreshEnv(plans[date],date));
+    if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
+    renderWeekCards();
+    updateCalculations();
+    renderPvCompare();
+    renderMarketCharts();
+    $('status-text').innerText=`🔄 Prognoza cen i plan zaktualizowane automatycznie • PSE: ${result.ok} dób oficjalnych`;
+  }finally{
+    officialPriceRefreshInProgress=false;
+  }
+}
+
 // Dane PSE są publikowane przez GitHub Actions, aby ominąć ograniczenie CORS API PSE.
-async function fetchPSEPricesForWeek(){
-  const cache=await loadPublishedPriceCache(); let ok=0;
+async function fetchPSEPricesForWeek(forceRefresh=false){
+  const cache=await loadPublishedPriceCache(forceRefresh);
+  if(!cache) return {ok:0};
+  let ok=0;
   Object.entries(cache?.electricity||{}).forEach(([d,entry])=>{
     const prices=entry&&entry.pricesMWh;
     if(!weekForecast[d]||!Array.isArray(prices)||prices.length!==24) return;
@@ -1278,7 +1309,7 @@ function renderMarketCharts(){
     const modelHours=dates.reduce((sum,date)=>sum+(weekForecast[date].modelHours||0),0);
     const officialHours=dates.reduce((sum,date)=>sum+(weekForecast[date].officialPriceHours||[]).filter(Boolean).length,0);
     const fallbackHours=dates.length*24-officialHours-manualCount*24-modelHours;
-    $('market-forecast-status').innerText=`${officialCount} dób / ${officialHours} godz.: cena oficjalna PSE • ${manualCount} dób: cena wpisana ręcznie • ${modelHours} godz.: model historyczny/pogodowy${fallbackHours>0?` • ${fallbackHours} godz.: profil awaryjny` : ''}${cache.generatedAt?` • dane odświeżone ${new Date(cache.generatedAt).toLocaleString('pl-PL')}`:''}`;
+    $('market-forecast-status').innerText=`${officialCount} dób / ${officialHours} godz.: cena oficjalna PSE • ${manualCount} dób: cena wpisana ręcznie • ${modelHours} godz.: model historyczny/pogodowy${fallbackHours>0?` • ${fallbackHours} godz.: profil awaryjny` : ''} • oficjalne ceny sprawdzane automatycznie co 5 min${cache.generatedAt?` • dane odświeżone ${new Date(cache.generatedAt).toLocaleString('pl-PL')}`:''}`;
     mkChart('marketForecastChart',{type:'bar',data:{labels:forecastLabels,datasets:[
       {type:'line',label:'Cena prądu (zł/MWh)',data:forecastRows.map(row=>row.price),borderColor:'#2563eb',backgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointBackgroundColor:forecastRows.map(row=>weekForecast[row.date].officialPriceHours?.[row.hour]?'#10b981':'#2563eb'),pointRadius:2,yAxisID:'yPrice',tension:.2},
       {type:'bar',label:'Prognoza PV (kWh/h)',data:forecastRows.map(row=>row.pv),backgroundColor:'rgba(217,119,6,.28)',borderColor:'#d97706',yAxisID:'yPv'},
