@@ -47,7 +47,8 @@ button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
 .inventory-card strong{min-width:90px}
 .inventory-card input{width:90px;padding:5px}
 .pickup-order{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #e2e8f0}
-.pickup-order select,.pickup-order input{max-width:180px}
+.pickup-order input{width:110px}
+.pickup-order button{min-width:42px}
 .inventory-forecast{max-height:300px;overflow:auto;margin-top:8px}
 .inventory-forecast table{font-size:.78rem}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:18px}
@@ -159,13 +160,10 @@ body.auth-locked .container{visibility:hidden}
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
-  <p class="note">Wpisz stany i maksymalne pojemności w tonach. Plan uwzględnia ilości i terminy odbiorów; gdy magazyn jest pełny, planowana jest przerwa. Puste maksimum oznacza brak limitu. Dane zapisują się w tej przeglądarce.</p>
+  <p class="note">Wpisz stany, maksymalne pojemności oraz sumy zamówień w tonach. Plan rozkłada pozostałe zamówienia równomiernie na 14 dni, uwzględnia stan magazynu i planuje postój przy pełnym magazynie. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
   <div class="inventory-grid" id="inventory-stock-inputs"></div>
-  <div>
-    <strong style="font-size:.84rem">Zamówienia odbioru</strong>
-    <div id="pickup-order-list"></div>
-    <button type="button" style="margin-top:8px" onclick="addPickupOrder()">＋ Dodaj odbiór</button>
-  </div>
+  <div id="pickup-order-list"></div>
+  <p class="note" id="pickup-order-status" role="status" style="margin-top:6px"></p>
   <div class="inventory-forecast" id="inventory-forecast"></div>
 </div>
 
@@ -543,7 +541,7 @@ function persistUserParams(){
 }
 
 function buildInventoryControls(){
-  const saved=lsGet(LS_INVENTORY,{});
+  const saved=normalizeInventoryState(lsGet(LS_INVENTORY,{}));
   const container=$('inventory-stock-inputs');
   container.replaceChildren();
   ['calcipril','granucal'].forEach(id=>{
@@ -573,61 +571,76 @@ function buildInventoryControls(){
     card.append(name,currentLabel,maximumLabel);
     container.append(card);
   });
-  renderPickupOrders(Array.isArray(saved.orders)?saved.orders:[]);
+  renderPickupOrders(saved);
 }
 
-function renderPickupOrders(orders){
+function normalizeInventoryState(saved){
+  const orders={calcipril:0,granucal:0};
+  if(Array.isArray(saved.orders)){
+    saved.orders.forEach(order=>{
+      const quantity=Number(order.quantity);
+      if(orders[order.product]!==undefined&&Number.isFinite(quantity)&&quantity>0){
+        orders[order.product]+=quantity;
+      }
+    });
+  }else{
+    ['calcipril','granucal'].forEach(id=>{
+      const quantity=Number(saved.orders?.[id]);
+      orders[id]=Number.isFinite(quantity)&&quantity>0?quantity:0;
+    });
+  }
+  const received={calcipril:0,granucal:0};
+  ['calcipril','granucal'].forEach(id=>{
+    const quantity=Number(saved.received?.[id]);
+    received[id]=Number.isFinite(quantity)&&quantity>0?quantity:0;
+  });
+  return {...saved,orders,received};
+}
+
+function renderPickupOrders(saved){
   const container=$('pickup-order-list');
   container.replaceChildren();
-  orders.forEach(order=>{
+  ['calcipril','granucal'].forEach(id=>{
     const row=document.createElement('div');
     row.className='pickup-order';
-    row.dataset.pickupOrder='1';
-    const product=document.createElement('select');
-    product.setAttribute('aria-label','Produkt odbioru');
-    ['calcipril','granucal'].forEach(id=>{
-      const option=document.createElement('option');
-      option.value=id;
-      option.textContent=PROD_META[id].name;
-      option.selected=order.product===id;
-      product.append(option);
-    });
-    const quantity=document.createElement('input');
-    quantity.type='number'; quantity.min='0'; quantity.step='0.1'; quantity.placeholder='Ilość (t)';
-    quantity.setAttribute('aria-label','Ilość odbioru w tonach');
-    quantity.value=order.quantity??'';
-    const date=document.createElement('input');
-    date.type='date'; date.setAttribute('aria-label','Data odbioru'); date.value=order.date||'';
-    const remove=document.createElement('button');
-    remove.type='button'; remove.textContent='Usuń';
-    remove.addEventListener('click',()=>{ row.remove(); inventoryChanged(); });
-    [product,quantity,date].forEach(input=>{
-      input.addEventListener('input',inventoryChanged);
-      input.addEventListener('change',inventoryChanged);
-    });
-    row.append(product,quantity,date,remove);
+    const name=document.createElement('strong');
+    name.textContent=PROD_META[id].name;
+    name.style.color=PROD_META[id].color;
+    const orderLabel=document.createElement('label');
+    orderLabel.textContent='Zamówienia (t) ';
+    const orderInput=document.createElement('input');
+    orderInput.type='number'; orderInput.min='0'; orderInput.step='0.1';
+    orderInput.id=`inventory-orders-${id}`;
+    orderInput.value=saved.orders[id]||0;
+    orderInput.addEventListener('input',inventoryChanged);
+    orderLabel.append(orderInput);
+    const receivedLabel=document.createElement('label');
+    receivedLabel.textContent='Odebrane (t) ';
+    const receivedInput=document.createElement('input');
+    receivedInput.type='number'; receivedInput.min='0'; receivedInput.step='0.1';
+    receivedInput.id=`inventory-received-${id}`;
+    receivedInput.value=saved.received[id]||'';
+    receivedInput.addEventListener('input',inventoryChanged);
+    receivedLabel.append(receivedInput);
+    const confirm=document.createElement('button');
+    confirm.type='button'; confirm.textContent='✓'; confirm.title=`Zatwierdź odbiór ${PROD_META[id].name}`;
+    confirm.setAttribute('aria-label',`Zatwierdź odebraną ilość ${PROD_META[id].name}`);
+    confirm.addEventListener('click',()=>confirmPickupReceived(id));
+    row.append(name,orderLabel,receivedLabel,confirm);
     container.append(row);
   });
 }
 
-function addPickupOrder(){
-  const orders=readInventoryInputs().orders;
-  orders.push({product:'calcipril',quantity:'',date:''});
-  renderPickupOrders(orders);
-}
-
 function readInventoryInputs(){
   const current={}, maximum={};
+  const orders={}, received={};
   ['calcipril','granucal'].forEach(id=>{
     current[id]=$(`inventory-current-${id}`).value;
     maximum[id]=$(`inventory-max-${id}`).value;
+    orders[id]=$(`inventory-orders-${id}`).value;
+    received[id]=$(`inventory-received-${id}`).value;
   });
-  const orders=[...document.querySelectorAll('[data-pickup-order]')].map(row=>({
-    product:row.querySelector('select').value,
-    quantity:row.querySelector('input[type="number"]').value,
-    date:row.querySelector('input[type="date"]').value
-  }));
-  return {current,maximum,orders};
+  return {current,maximum,orders,received};
 }
 
 function inventoryChanged(){
@@ -635,8 +648,35 @@ function inventoryChanged(){
   try{
     localStorage.setItem(LS_INVENTORY,JSON.stringify(state));
   }catch(error){
-    $('inventory-forecast').textContent=`Nie udało się zapisać ustawień magazynu: ${error.message}`;
+    $('pickup-order-status').textContent=`Nie udało się zapisać ustawień magazynu: ${error.message}`;
+    return;
   }
+  renderForecastProductionChart(getParams());
+}
+
+function confirmPickupReceived(id){
+  const state=readInventoryInputs();
+  const quantity=Number(state.received[id]);
+  const outstanding=Number(state.orders[id]);
+  if(!Number.isFinite(quantity)||quantity<=0){
+    $('pickup-order-status').textContent='Wpisz odebraną ilość większą od zera.';
+    return;
+  }
+  if(!Number.isFinite(outstanding)||quantity>outstanding){
+    $('pickup-order-status').textContent=`Odebrana ilość nie może przekraczać zamówienia (${fmt(Math.max(0,outstanding||0),1)} t).`;
+    return;
+  }
+  state.orders[id]=Math.max(0,outstanding-quantity);
+  state.received[id]=0;
+  $(`inventory-orders-${id}`).value=state.orders[id];
+  $(`inventory-received-${id}`).value='';
+  try{
+    localStorage.setItem(LS_INVENTORY,JSON.stringify(state));
+  }catch(error){
+    $('pickup-order-status').textContent=`Nie udało się zapisać odbioru: ${error.message}`;
+    return;
+  }
+  $('pickup-order-status').textContent=`✓ Zatwierdzono odbiór ${fmt(quantity,1)} t ${PROD_META[id].name}; pozostało ${fmt(state.orders[id],1)} t.`;
   renderForecastProductionChart(getParams());
 }
 
@@ -647,15 +687,10 @@ function getInventoryConfig(){
     const currentValue=Number(saved.current[id]);
     const maxText=saved.maximum[id].trim();
     const maxValue=Number(maxText);
+    const orderValue=Number(saved.orders[id]);
     current[id]=Number.isFinite(currentValue)&&currentValue>=0?currentValue:0;
     maximum[id]=maxText===''?null:Number.isFinite(maxValue)&&maxValue>=0?maxValue:null;
-  });
-  saved.orders.forEach(order=>{
-    const quantity=Number(order.quantity);
-    if(!['calcipril','granucal'].includes(order.product)||!order.date
-      ||!Number.isFinite(quantity)||quantity<=0) return;
-    orders[order.date]||={calcipril:0,granucal:0};
-    orders[order.date][order.product]+=quantity;
+    orders[id]=Number.isFinite(orderValue)&&orderValue>0?orderValue:0;
   });
   return {current,maximum,orders};
 }
@@ -1272,50 +1307,33 @@ function renderForecastProductionChart(P=getParams()){
   const inventory=getInventoryConfig();
   const projectedStock={...inventory.current};
   const inventoryRows=[];
+  const remainingOrders={...inventory.orders};
   const rowsByDate=dates.map((date,dayIndex)=>{
     const rows=newRows(date);
     const dailyParams={...P,products:{...P.products}};
-    const pickup=inventory.orders[date]||{calcipril:0,granucal:0};
-    const pickupPlans={};
     ['calcipril','granucal'].forEach(id=>{
-      const nextPickupIndex=dates.findIndex((candidate,index)=>index>=dayIndex
-        &&(inventory.orders[candidate]?.[id]||0)>0);
-      let pickupDemand=0;
-      if(nextPickupIndex>=0){
-        for(let index=dayIndex;index<=nextPickupIndex;index++){
-          pickupDemand+=inventory.orders[dates[index]]?.[id]||0;
-        }
-      }
-      const demandTarget=nextPickupIndex<0
-        ?P.products[id].target
-        :Math.max(P.products[id].target,Math.max(0,(pickupDemand-projectedStock[id])/(nextPickupIndex-dayIndex+1)));
+      const hasOrders=inventory.orders[id]>0;
+      const dailyDemand=hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
       const room=inventory.maximum[id]===null
         ?Infinity
         :Math.max(0,inventory.maximum[id]-projectedStock[id]);
-      dailyParams.products[id]={...P.products[id],target:Math.min(demandTarget,room)};
-      pickupPlans[id]={days:nextPickupIndex<0?Infinity:nextPickupIndex-dayIndex,
-        shortage:Math.max(0,pickupDemand-projectedStock[id])};
+      const target=hasOrders?Math.max(0,dailyDemand-projectedStock[id]):P.products[id].target;
+      dailyParams.products[id]={...P.products[id],target:Math.min(target,room)};
     });
-    const competingIds=['calcipril','granucal'];
-    const urgentProduct=competingIds.sort((a,b)=>
-      pickupPlans[a].days-pickupPlans[b].days
-      ||pickupPlans[b].shortage-pickupPlans[a].shortage)[0];
-    const otherProduct=competingIds.find(id=>id!==urgentProduct);
-    const urgentSlots=Math.ceil(dailyParams.products[urgentProduct].target/dailyParams.products[urgentProduct].rate);
-    const otherSlots=Math.ceil(dailyParams.products[otherProduct].target/dailyParams.products[otherProduct].rate);
-    if(pickupPlans[urgentProduct].shortage>0&&urgentSlots+otherSlots>24){
-      dailyParams.products[otherProduct].target=Math.min(dailyParams.products[otherProduct].target,
-        Math.max(0,24-urgentSlots)*dailyParams.products[otherProduct].rate);
-    }
     planForecastProductionDay(rows,dailyParams);
     calcRows(rows,dailyParams);
     ['calcipril','granucal'].forEach(id=>{
       const produced=rows.reduce((sum,row)=>sum
         +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0);
       const available=projectedStock[id]+produced;
-      const shortage=Math.max(0,pickup[id]-available);
-      const ending=Math.max(0,available-pickup[id]);
-      inventoryRows.push({date,id,start:projectedStock[id],produced,pickup:pickup[id],ending,shortage});
+      const hasOrders=inventory.orders[id]>0;
+      const demand=hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
+      const fulfilled=hasOrders?Math.min(demand,available):0;
+      const shortage=Math.max(0,demand-fulfilled);
+      if(hasOrders) remainingOrders[id]=Math.max(0,remainingOrders[id]-fulfilled);
+      const ending=Math.max(0,available-fulfilled);
+      inventoryRows.push({date,id,start:projectedStock[id],produced,demand,fulfilled,
+        remaining:remainingOrders[id],ending,shortage});
       projectedStock[id]=ending;
     });
     return {date,rows};
@@ -1364,9 +1382,10 @@ function renderForecastProductionChart(P=getParams()){
   const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
   const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
   $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
-  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Odbiór</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
+  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Przewidywane odbiory</th><th>Pozostałe zamówienie</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
     <td>${item.date}</td><td style="color:${PROD_META[item.id].color};font-weight:700">${PROD_META[item.id].name}</td>
-    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${fmt(item.pickup,1)} t</td><td>${fmt(item.ending,1)} t</td>
+    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${fmt(item.fulfilled,1)} t</td>
+    <td>${fmt(item.remaining,1)} t</td><td>${fmt(item.ending,1)} t</td>
     <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t na odbiór`:inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
   </tr>`).join('')}</tbody></table>`;
 }
