@@ -404,8 +404,8 @@ const LAT = 52.1869, LON = 22.9469;
 const GAS_CONV = 10.972; // kWh/m3
 const PROD_IDS = ['calcipril','granucal','maczka'];
 const PROD_META = {
-  calcipril:{name:'Calcipril',color:'#9333ea',rate:1.0,el:110,gas:75,target:10},
-  granucal:{name:'Granucal',color:'#0891b2',rate:0.8,el:120,gas:85,target:8},
+  calcipril:{name:'Calcipril',color:'#9333ea',rate:6.0,el:110,gas:75,target:10},
+  granucal:{name:'Granucal',color:'#0891b2',rate:6.0,el:120,gas:85,target:8},
   maczka:{name:'Mączka',color:'#d97706',rate:1.2,el:80,gas:50,target:8}
 };
 const SHIFTS = {
@@ -553,6 +553,8 @@ function restoreUserParams(){
   ['pv-peak-power','max-price-threshold','load-standby','elec-extra','gas-tge-mwh','gas-extra','gas-standby',
     ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])]
     .forEach(id=>{ if(saved[id]!==undefined) $(id).value=saved[id]; });
+  if(Number(saved['p-rate-calcipril'])===1) $('p-rate-calcipril').value=PROD_META.calcipril.rate;
+  if(Number(saved['p-rate-granucal'])===0.8) $('p-rate-granucal').value=PROD_META.granucal.rate;
   if(typeof saved.forceTargets==='boolean') $('force-targets').checked=saved.forceTargets;
 }
 function persistUserParams(){
@@ -717,6 +719,13 @@ function getInventoryConfig(){
     orders[id]=Number.isFinite(orderValue)&&orderValue>0?orderValue:0;
   });
   return {current,maximum,orders};
+}
+
+function fullBatchTarget(target,room,rate){
+  if(!Number.isFinite(target)||target<=0||!Number.isFinite(rate)||rate<=0||room<rate) return 0;
+  const wantedBatches=Math.ceil(target/rate);
+  const availableBatches=Number.isFinite(room)?Math.floor((room+1e-9)/rate):wantedBatches;
+  return Math.max(0,Math.min(wantedBatches,availableBatches))*rate;
 }
 
 function getParams(){
@@ -1368,7 +1377,8 @@ function renderForecastProductionChart(P=getParams()){
         ?Infinity
         :Math.max(0,inventory.maximum[id]-projectedStock[id]);
       const target=hasOrders?Math.max(0,dailyDemand-projectedStock[id]):P.products[id].target;
-      dailyParams.products[id]={...P.products[id],target:Math.min(target,room)};
+      dailyParams.products[id]={...P.products[id],
+        target:fullBatchTarget(Math.min(target,room),room,P.products[id].rate)};
     });
     planForecastProductionDay(rows,dailyParams);
     applyForecastHourOverrides(date,rows,dailyParams);
