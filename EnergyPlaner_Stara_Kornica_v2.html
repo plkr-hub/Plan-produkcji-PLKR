@@ -42,6 +42,14 @@ button.active{background:var(--primary);color:#fff;border-color:var(--primary)}
 .prod-box{background:#fff;border:1px solid #c7d2fe;border-radius:8px;padding:8px 12px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;color:#0f172a}
 .prod-box strong{min-width:80px}
 .prod-box input{width:62px;padding:3px 5px}
+.inventory-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin:10px 0}
+.inventory-card{background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.inventory-card strong{min-width:90px}
+.inventory-card input{width:90px;padding:5px}
+.pickup-order{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #e2e8f0}
+.pickup-order select,.pickup-order input{max-width:180px}
+.inventory-forecast{max-height:300px;overflow:auto;margin-top:8px}
+.inventory-forecast table{font-size:.78rem}
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:18px}
 .stat-card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 2px 4px rgba(0,0,0,.03);border-left:5px solid var(--primary)}
 .stat-card.green{border-left-color:var(--green);background:var(--green-bg)}.stat-card.purple{border-left-color:var(--purple);background:#f5f3ff}.stat-card.solar{border-left-color:var(--solar);background:var(--solar-bg)}.stat-card.gas{border-left-color:var(--gas);background:var(--gas-bg)}.stat-card.prod{border-left-color:var(--prod);background:var(--prod-bg)}
@@ -150,6 +158,15 @@ body.auth-locked .container{visibility:hidden}
   <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Plan uwzględnia cele dobowe, cenę energii, PV oraz koszt rozruchu — przerwy do 2 godzin są wypełniane produkcją, nawet gdy cena przekracza 800 zł/MWh.</p>
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
+  <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
+  <p class="note">Wpisz stany i maksymalne pojemności w tonach. Plan uwzględnia ilości i terminy odbiorów; gdy magazyn jest pełny, planowana jest przerwa. Puste maksimum oznacza brak limitu. Dane zapisują się w tej przeglądarce.</p>
+  <div class="inventory-grid" id="inventory-stock-inputs"></div>
+  <div>
+    <strong style="font-size:.84rem">Zamówienia odbioru</strong>
+    <div id="pickup-order-list"></div>
+    <button type="button" style="margin-top:8px" onclick="addPickupOrder()">＋ Dodaj odbiór</button>
+  </div>
+  <div class="inventory-forecast" id="inventory-forecast"></div>
 </div>
 
 <div class="panel">
@@ -383,6 +400,7 @@ const SHIFTS = {
 };
 const LS_STATS='energyplaner_kornica_stats_v2', LS_PVACT='energyplaner_pv_actual_v1', LS_PVLIVE='energyplaner_pv_live_v1', LS_CFG='energyplaner_cfg_v1';
 const LS_PLANS='energyplaner_kornica_plans_v1', LS_PARAMS='energyplaner_kornica_params_v1';
+const LS_INVENTORY='energyplaner_kornica_inventory_v1';
 
 let selectedDateStr = '';
 let weekForecast = {};   // date -> {hours:[{irrWm2,cloudPct,tempC}], pricesMWh:[24], isOfficialPSE}
@@ -478,6 +496,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   if(location.protocol.startsWith('http')) $('gas-proxy-url').value=location.origin;
   buildProductParams();
   restoreUserParams();
+  buildInventoryControls();
   buildScadaUI();
   const cfg = lsGet(LS_CFG,{});
   ['live-url','live-path','live-unit','live-interval','live-auth'].forEach(id=>{ if(cfg[id]!==undefined) $(id).value=cfg[id]; });
@@ -521,6 +540,124 @@ function persistUserParams(){
     const saved={}; ids.forEach(id=>saved[id]=$(id).value); saved.forceTargets=$('force-targets').checked;
     localStorage.setItem(LS_PARAMS,JSON.stringify(saved));
   }catch(e){}
+}
+
+function buildInventoryControls(){
+  const saved=lsGet(LS_INVENTORY,{});
+  const container=$('inventory-stock-inputs');
+  container.replaceChildren();
+  ['calcipril','granucal'].forEach(id=>{
+    const card=document.createElement('div');
+    card.className='inventory-card';
+    card.style.borderColor=PROD_META[id].color;
+    const name=document.createElement('strong');
+    name.textContent=PROD_META[id].name;
+    name.style.color=PROD_META[id].color;
+    const currentLabel=document.createElement('label');
+    currentLabel.append('Stan (t) ');
+    const current=document.createElement('input');
+    current.type='number'; current.min='0'; current.step='0.1';
+    current.id=`inventory-current-${id}`;
+    current.value=Number.isFinite(Number(saved.current?.[id]))?saved.current[id]:0;
+    current.addEventListener('input',inventoryChanged);
+    currentLabel.append(current);
+    const maximumLabel=document.createElement('label');
+    maximumLabel.append('Maks. stan (t) ');
+    const maximum=document.createElement('input');
+    maximum.type='number'; maximum.min='0'; maximum.step='0.1';
+    maximum.id=`inventory-max-${id}`;
+    maximum.value=saved.maximum?.[id]??'';
+    maximum.placeholder='bez limitu';
+    maximum.addEventListener('input',inventoryChanged);
+    maximumLabel.append(maximum);
+    card.append(name,currentLabel,maximumLabel);
+    container.append(card);
+  });
+  renderPickupOrders(Array.isArray(saved.orders)?saved.orders:[]);
+}
+
+function renderPickupOrders(orders){
+  const container=$('pickup-order-list');
+  container.replaceChildren();
+  orders.forEach(order=>{
+    const row=document.createElement('div');
+    row.className='pickup-order';
+    row.dataset.pickupOrder='1';
+    const product=document.createElement('select');
+    product.setAttribute('aria-label','Produkt odbioru');
+    ['calcipril','granucal'].forEach(id=>{
+      const option=document.createElement('option');
+      option.value=id;
+      option.textContent=PROD_META[id].name;
+      option.selected=order.product===id;
+      product.append(option);
+    });
+    const quantity=document.createElement('input');
+    quantity.type='number'; quantity.min='0'; quantity.step='0.1'; quantity.placeholder='Ilość (t)';
+    quantity.setAttribute('aria-label','Ilość odbioru w tonach');
+    quantity.value=order.quantity??'';
+    const date=document.createElement('input');
+    date.type='date'; date.setAttribute('aria-label','Data odbioru'); date.value=order.date||'';
+    const remove=document.createElement('button');
+    remove.type='button'; remove.textContent='Usuń';
+    remove.addEventListener('click',()=>{ row.remove(); inventoryChanged(); });
+    [product,quantity,date].forEach(input=>{
+      input.addEventListener('input',inventoryChanged);
+      input.addEventListener('change',inventoryChanged);
+    });
+    row.append(product,quantity,date,remove);
+    container.append(row);
+  });
+}
+
+function addPickupOrder(){
+  const orders=readInventoryInputs().orders;
+  orders.push({product:'calcipril',quantity:'',date:''});
+  renderPickupOrders(orders);
+}
+
+function readInventoryInputs(){
+  const current={}, maximum={};
+  ['calcipril','granucal'].forEach(id=>{
+    current[id]=$(`inventory-current-${id}`).value;
+    maximum[id]=$(`inventory-max-${id}`).value;
+  });
+  const orders=[...document.querySelectorAll('[data-pickup-order]')].map(row=>({
+    product:row.querySelector('select').value,
+    quantity:row.querySelector('input[type="number"]').value,
+    date:row.querySelector('input[type="date"]').value
+  }));
+  return {current,maximum,orders};
+}
+
+function inventoryChanged(){
+  const state=readInventoryInputs();
+  try{
+    localStorage.setItem(LS_INVENTORY,JSON.stringify(state));
+  }catch(error){
+    $('inventory-forecast').textContent=`Nie udało się zapisać ustawień magazynu: ${error.message}`;
+  }
+  renderForecastProductionChart(getParams());
+}
+
+function getInventoryConfig(){
+  const saved=readInventoryInputs();
+  const current={}, maximum={}, orders={};
+  ['calcipril','granucal'].forEach(id=>{
+    const currentValue=Number(saved.current[id]);
+    const maxText=saved.maximum[id].trim();
+    const maxValue=Number(maxText);
+    current[id]=Number.isFinite(currentValue)&&currentValue>=0?currentValue:0;
+    maximum[id]=maxText===''?null:Number.isFinite(maxValue)&&maxValue>=0?maxValue:null;
+  });
+  saved.orders.forEach(order=>{
+    const quantity=Number(order.quantity);
+    if(!['calcipril','granucal'].includes(order.product)||!order.date
+      ||!Number.isFinite(quantity)||quantity<=0) return;
+    orders[order.date]||={calcipril:0,granucal:0};
+    orders[order.date][order.product]+=quantity;
+  });
+  return {current,maximum,orders};
 }
 
 function getParams(){
@@ -1132,10 +1269,55 @@ function updateMarketThreshold(){
 
 function renderForecastProductionChart(P=getParams()){
   const dates=Object.keys(weekForecast).filter(date=>date>=todayStr()).sort().slice(0,14);
-  const rowsByDate=dates.map(date=>{
+  const inventory=getInventoryConfig();
+  const projectedStock={...inventory.current};
+  const inventoryRows=[];
+  const rowsByDate=dates.map((date,dayIndex)=>{
     const rows=newRows(date);
-    planForecastProductionDay(rows,P);
-    calcRows(rows,P);
+    const dailyParams={...P,products:{...P.products}};
+    const pickup=inventory.orders[date]||{calcipril:0,granucal:0};
+    const pickupPlans={};
+    ['calcipril','granucal'].forEach(id=>{
+      const nextPickupIndex=dates.findIndex((candidate,index)=>index>=dayIndex
+        &&(inventory.orders[candidate]?.[id]||0)>0);
+      let pickupDemand=0;
+      if(nextPickupIndex>=0){
+        for(let index=dayIndex;index<=nextPickupIndex;index++){
+          pickupDemand+=inventory.orders[dates[index]]?.[id]||0;
+        }
+      }
+      const demandTarget=nextPickupIndex<0
+        ?P.products[id].target
+        :Math.max(P.products[id].target,Math.max(0,(pickupDemand-projectedStock[id])/(nextPickupIndex-dayIndex+1)));
+      const room=inventory.maximum[id]===null
+        ?Infinity
+        :Math.max(0,inventory.maximum[id]-projectedStock[id]);
+      dailyParams.products[id]={...P.products[id],target:Math.min(demandTarget,room)};
+      pickupPlans[id]={days:nextPickupIndex<0?Infinity:nextPickupIndex-dayIndex,
+        shortage:Math.max(0,pickupDemand-projectedStock[id])};
+    });
+    const competingIds=['calcipril','granucal'];
+    const urgentProduct=competingIds.sort((a,b)=>
+      pickupPlans[a].days-pickupPlans[b].days
+      ||pickupPlans[b].shortage-pickupPlans[a].shortage)[0];
+    const otherProduct=competingIds.find(id=>id!==urgentProduct);
+    const urgentSlots=Math.ceil(dailyParams.products[urgentProduct].target/dailyParams.products[urgentProduct].rate);
+    const otherSlots=Math.ceil(dailyParams.products[otherProduct].target/dailyParams.products[otherProduct].rate);
+    if(pickupPlans[urgentProduct].shortage>0&&urgentSlots+otherSlots>24){
+      dailyParams.products[otherProduct].target=Math.min(dailyParams.products[otherProduct].target,
+        Math.max(0,24-urgentSlots)*dailyParams.products[otherProduct].rate);
+    }
+    planForecastProductionDay(rows,dailyParams);
+    calcRows(rows,dailyParams);
+    ['calcipril','granucal'].forEach(id=>{
+      const produced=rows.reduce((sum,row)=>sum
+        +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0);
+      const available=projectedStock[id]+produced;
+      const shortage=Math.max(0,pickup[id]-available);
+      const ending=Math.max(0,available-pickup[id]);
+      inventoryRows.push({date,id,start:projectedStock[id],produced,pickup:pickup[id],ending,shortage});
+      projectedStock[id]=ending;
+    });
     return {date,rows};
   });
   const labels=rowsByDate.flatMap(({date})=>Array.from({length:24},(_,hour)=>`${date.slice(5)} ${String(hour).padStart(2,'0')}:00`));
@@ -1182,6 +1364,11 @@ function renderForecastProductionChart(P=getParams()){
   const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
   const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
   $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
+  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Odbiór</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
+    <td>${item.date}</td><td style="color:${PROD_META[item.id].color};font-weight:700">${PROD_META[item.id].name}</td>
+    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${fmt(item.pickup,1)} t</td><td>${fmt(item.ending,1)} t</td>
+    <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t na odbiór`:inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
+  </tr>`).join('')}</tbody></table>`;
 }
 
 function planForecastProductionDay(rows,P){
