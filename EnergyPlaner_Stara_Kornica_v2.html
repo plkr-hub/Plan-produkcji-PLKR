@@ -147,7 +147,7 @@ body.auth-locked .container{visibility:hidden}
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
-  <p class="note" style="margin-bottom:6px">Plan uwzględnia cele dobowe, limit dwóch produktów jednocześnie, cenę energii i PV zmniejszające pobór z sieci. Produkcja jest kierowana w godziny poniżej limitu; godziny z dużą nadwyżką PV mogą być opłacalne także powyżej limitu.</p>
+  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Plan uwzględnia cele dobowe, cenę energii, PV oraz koszt rozruchu — przerwy do 2 godzin są wypełniane produkcją, nawet gdy cena przekracza 800 zł/MWh.</p>
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
 </div>
@@ -372,7 +372,7 @@ const LAT = 52.1869, LON = 22.9469;
 const GAS_CONV = 10.972; // kWh/m3
 const PROD_IDS = ['calcipril','granucal','maczka'];
 const PROD_META = {
-  calcipril:{name:'Calcipril',color:'#4f46e5',rate:1.0,el:110,gas:75,target:10},
+  calcipril:{name:'Calcipril',color:'#9333ea',rate:1.0,el:110,gas:75,target:10},
   granucal:{name:'Granucal',color:'#0891b2',rate:0.8,el:120,gas:85,target:8},
   maczka:{name:'Mączka',color:'#d97706',rate:1.2,el:80,gas:50,target:8}
 };
@@ -1128,7 +1128,7 @@ function renderForecastProductionChart(P=getParams()){
   const dates=Object.keys(weekForecast).filter(date=>date>=todayStr()).sort().slice(0,14);
   const rowsByDate=dates.map(date=>{
     const rows=newRows(date);
-    optimizeRows(rows,{...P,force:false});
+    planForecastProductionDay(rows,P);
     calcRows(rows,P);
     return {date,rows};
   });
@@ -1176,6 +1176,67 @@ function renderForecastProductionChart(P=getParams()){
   const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
   const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
   $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
+}
+
+function planForecastProductionDay(rows,P){
+  const selected=rows.map(()=>new Set());
+  const target=Object.fromEntries(PROD_IDS.map(id=>[id,Math.max(0,P.products[id].target)]));
+  const requiredSlots=Object.fromEntries(PROD_IDS.map(id=>[
+    id,target[id]>0?Math.ceil(target[id]/P.products[id].rate):0
+  ]));
+  const selectedSlots=Object.fromEntries(PROD_IDS.map(id=>[id,0]));
+  const competing=new Set(['calcipril','granucal']);
+  const hourCost=(hour,id)=>{
+    const row=rows[hour];
+    const load=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum+(selected[hour].has(product)?P.products[product].el:0),P.products[id].el);
+    const gridShare=Math.max(0,load-row.pvKwh)/load;
+    return (row.priceMWh+P.elecExtra)*gridShare;
+  };
+  const canAdd=(hour,id)=>!selected[hour].has(id)
+    &&selected[hour].size<2
+    &&!(competing.has(id)&&[...selected[hour]].some(other=>competing.has(other)));
+
+  while(PROD_IDS.some(id=>selectedSlots[id]<requiredSlots[id])){
+    let best=null;
+    rows.forEach((row,hour)=>{
+      PROD_IDS.forEach(id=>{
+        if(selectedSlots[id]>=requiredSlots[id]||!canAdd(hour,id)) return;
+        const score=hourCost(hour,id);
+        const candidate={hour,id,score,priority:(requiredSlots[id]-selectedSlots[id])/requiredSlots[id]};
+        if(!best||candidate.score<best.score
+          ||(candidate.score===best.score&&candidate.priority>best.priority)) best=candidate;
+      });
+    });
+    if(!best) break;
+    selected[best.hour].add(best.id);
+    selectedSlots[best.id]++;
+  }
+
+  for(let hour=0;hour<rows.length;hour++){
+    if(!selected[hour].size) continue;
+    let next=hour+1;
+    while(next<rows.length&&!selected[next].size) next++;
+    const gap=next-hour-1;
+    if(next>=rows.length||gap===0||gap>2) continue;
+    for(let fill=hour+1;fill<next;fill++){
+      const candidates=[...new Set([...selected[hour],...selected[next]])]
+        .filter(id=>canAdd(fill,id))
+        .sort((a,b)=>hourCost(fill,a)-hourCost(fill,b));
+      if(candidates.length){
+        selected[fill].add(candidates[0]);
+        selectedSlots[candidates[0]]++;
+      }
+    }
+  }
+
+  rows.forEach((row,hour)=>{
+    const products=[...selected[hour]];
+    row.p1=products[0]||'';
+    row.p2=products[1]||'';
+    row.q1=row.p1?Math.min(P.products[row.p1].rate,target[row.p1]/selectedSlots[row.p1]):0;
+    row.q2=row.p2?Math.min(P.products[row.p2].rate,target[row.p2]/selectedSlots[row.p2]):0;
+    row.task=products.map(id=>PROD_META[id].name).join(' + ')||'Postój ekonomiczny';
+  });
 }
 
 // ---------- Ręczne ceny ----------
