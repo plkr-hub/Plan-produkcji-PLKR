@@ -482,8 +482,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('market-year').value = now.getFullYear();
   const y = new Date(); y.setDate(y.getDate()-1);
   $('pv-file-date').value = formatDate(y);
-  setDayOffset(1);
   fetchAllOnlineData();
+  setDayOffset(1);
   setInterval(refreshOfficialPriceData,5*60*1000);
   document.addEventListener('visibilitychange',()=>{
     if(!document.hidden) refreshOfficialPriceData();
