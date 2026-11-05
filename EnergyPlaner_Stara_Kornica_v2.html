@@ -137,7 +137,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
-  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić do 200 zł/MWh ponad limit. Wyższa cena jest dopuszczona tylko wtedy, gdy PV obniża efektywny koszt energii z sieci do limitu. Harmonogram dobowy i 14-dniowy korzystają z tego samego planu — ręczne zmiany godzin są synchronizowane w obu widokach. Koszty gazu liczone są z ceny TGE, a „kW gaz” oznacza zużycie linii.</p>
+  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Plan 14-dniowy pomija cele dobowe i w pierwszej kolejności wybiera produkt o najwyższej wydajności t/h, zachowując limity magazynu i zamówień. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić do 200 zł/MWh ponad limit. Wyższa cena jest dopuszczona tylko wtedy, gdy PV obniża efektywny koszt energii z sieci do limitu, chyba że włączono wymuszenie produkcji poza limitem. Harmonogram dobowy i 14-dniowy korzystają z tego samego planu — ręczne zmiany godzin są synchronizowane w obu widokach. Koszty gazu liczone są z ceny TGE, a „kW gaz” oznacza zużycie linii.</p>
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
@@ -212,7 +212,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
       <span class="note" style="width:100%">Domyślnie: dni robocze 7:00–22:00; zakres można zmienić zgodnie z umową/taryfą. Święta nie są automatycznie wyłączane. Stawka jest doliczana tylko do kWh pobranych z sieci w wybranych godzinach. Wartości są zapisywane lokalnie w tej przeglądarce. Zapisane wcześniej statystyki pozostają bez zmian.</span>
     </div>
     <div class="param-group">
-      <label><input type="checkbox" id="force-targets" checked style="width:auto" onchange="autoOptimizeSchedule()"> Wymuś realizację celów dobowych (uzupełnij najtańszymi godzinami)</label>
+      <label><input type="checkbox" id="force-targets" checked style="width:auto" onchange="autoOptimizeSchedule()"> Wymuś produkcję także ponad limit ceny (najtańsze godziny)</label>
     </div>
   </div>
 </div>
@@ -746,7 +746,7 @@ function updateMaxPriceStatus(){
     $('max-price-status').textContent='Wpisz nieujemny limit ceny w zł/MWh.';
     return false;
   }
-  $('max-price-status').textContent=`Planowanie preferuje pobór energii do ${fmt(threshold,0)} zł/MWh. Wymuszenie celów dobowych może dodać produkcję także w droższych godzinach.`;
+  $('max-price-status').textContent=`Planowanie preferuje pobór energii do ${fmt(threshold,0)} zł/MWh. Wymuszenie produkcji może dodać godziny ponad limit.`;
   return true;
 }
 function onMaxPriceChange(){
@@ -1449,16 +1449,21 @@ function buildForecastProductionPlan(P=getParams()){
   const rowsByDate=dates.map((date,dayIndex)=>{
     const rows=newRows(date);
     const dailyParams={...P,products:{...P.products}};
-    ['calcipril','granucal'].forEach(id=>{
-      const hasOrders=inventory.orders[id]>0;
+    PROD_IDS.forEach(id=>{
+      const stock=projectedStock[id]||0;
+      const maximum=inventory.maximum[id]??null;
+      const orderQuantity=inventory.orders[id]||0;
+      const hasOrders=orderQuantity>0;
       const dailyDemand=hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
-      const room=inventory.maximum[id]===null
+      const room=maximum===null
         ?Infinity
-        :Math.max(0,inventory.maximum[id]-projectedStock[id]);
-      const target=hasOrders?Math.max(0,dailyDemand-projectedStock[id]):P.products[id].target;
+        :Math.max(0,maximum-stock);
+      const target=hasOrders
+        ?Math.max(0,dailyDemand-stock)
+        :room===Infinity?P.products[id].rate*24:room;
       const productionLimit=hasOrders
-        ?Math.max(0,Math.min(room,remainingOrders[id]-projectedStock[id]))
-        :Math.min(target,room);
+        ?Math.max(0,Math.min(room,remainingOrders[id]-stock))
+        :Math.min(P.products[id].rate*24,room);
       dailyParams.products[id]={...P.products[id],
         target:fullBatchTarget(Math.min(target,room),room,P.products[id].rate),
         productionLimit:fullBatchTarget(productionLimit,room,P.products[id].rate)};
@@ -1769,9 +1774,9 @@ function planForecastProductionDay(rows,P){
           if(!Number.isFinite(row.priceMWh)||selectedSlots[id]>=requiredSlots[id]
             ||!isAllowed(hour,id)||!canAdd(hour,id)) return;
           const score=hourCost(hour,id);
-          const candidate={hour,id,score,priority:(requiredSlots[id]-selectedSlots[id])/requiredSlots[id]};
-          if(!best||candidate.score<best.score
-            ||(candidate.score===best.score&&candidate.priority>best.priority)) best=candidate;
+          const candidate={hour,id,score,rate:P.products[id].rate};
+          if(!best||candidate.rate>best.rate
+            ||(candidate.rate===best.rate&&candidate.score<best.score)) best=candidate;
         });
       });
       if(!best) break;
