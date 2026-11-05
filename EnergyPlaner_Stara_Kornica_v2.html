@@ -198,7 +198,6 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="stat-card gas"><div class="stat-title">🔥 Gaz (doba)</div><div class="stat-value" id="stat-gas-total">0</div><div class="stat-sub" id="stat-gas-cost"></div></div>
   <div class="stat-card prod"><div class="stat-title">🏭 Produkcja (t)</div><div class="stat-value" id="stat-total-prod">0</div><div class="stat-sub" id="stat-prod-target-info"></div></div>
   <div class="stat-card purple"><div class="stat-title">💰 Koszt energii (doba)</div><div class="stat-value" id="stat-total-cost">0</div><div class="stat-sub" id="stat-unit-cost"></div></div>
-  <div class="stat-card gas"><div class="stat-title">🖥️ SCADA (doba)</div><div class="stat-value" id="stat-scada">–</div><div class="stat-sub" id="stat-scada-sub"></div></div>
 </div>
 
 <div class="shifts-container" id="shifts-container"></div>
@@ -272,43 +271,6 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   </div>
 </div>
 
-<!-- SCADA -->
-<div class="panel">
-  <h3 style="margin-bottom:4px">🖥️ Moduł SCADA: woda, gaz (przepływomierz), waga taśmowa, silosy, palniki, silniki</h3>
-  <p class="note" style="margin-bottom:12px">Przeglądarka łączy się z SCADA przez HTTP/JSON (REST z Ignition, WinCC, Wonderware, Node-RED, bramka OPC UA/Modbus→REST itp.). Podaj jeden URL zwracający wszystkie tagi (ścieżki JSON w kolumnie „Ścieżka") albo osobny URL dla wybranych kanałów. Bez żadnego URL działa symulacja do testów. Silniki: wartość &gt; 0,5 (lub tekst RUN/ON) = praca.</p>
-  <div class="row">
-    <label style="flex:1;min-width:260px">URL SCADA (JSON z wszystkimi tagami): <input type="text" id="sc-base-url" style="width:100%" placeholder="http://192.168.1.50:8088/scada/tags" onchange="saveScCfg()"></label>
-    <label>Authorization: <input type="text" id="sc-auth" style="width:190px" placeholder="Bearer ..." onchange="saveScCfg()"></label>
-    <label>Co (s): <input type="number" id="sc-interval" value="30" style="width:60px" onchange="saveScCfg()"></label>
-    <button class="btn-success" id="btn-sc" onclick="toggleScada()">▶ Start monitoringu SCADA</button>
-    <span id="sc-status" class="note">Zatrzymany</span>
-  </div>
-  <div class="scroll"><table>
-    <thead><tr><th>Aktywny</th><th>Kanał</th><th>Nazwa</th><th>URL kanału (opcj.)</th><th>Ścieżka JSON</th><th>Tryb</th><th>Mnożnik</th><th>Odczyt bieżący</th><th>Dziś (wybrana doba)</th></tr></thead>
-    <tbody id="sc-channels"></tbody>
-  </table></div>
-  <div class="live-box" style="margin-top:14px">
-    <div class="sub-panel">
-      <h4>📂 Import historii pracy z SCADA (CSV / TXT)</h4>
-      <div class="row">
-        <label>Dzień: <input type="date" id="sc-file-date"></label>
-        <label>Kanał: <select id="sc-file-ch"></select></label>
-      </div>
-      <input type="file" accept=".csv,.txt,.tsv" onchange="importScadaFile(this)">
-      <p class="note">Format (separator ; lub tabulator): „data godzina ; tag ; wartość" (np. 2026-11-01 08:15:00;Silnik 1;1), albo „data godzina ; wartość" po wybraniu konkretnego kanału. Przepływ: średnia z godziny lub różnica licznika (tryb „licznik"); silnik: % czasu pracy; silos: ostatni poziom; palnik: średnia i max.</p>
-      <div class="row"><button class="btn-primary" onclick="syncScadaToStats()">🔄 Przenieś dane SCADA do statystyk</button><button onclick="clearScadaDay()">Usuń dane SCADA wybranej doby</button></div>
-      <div id="sc-import-status" class="note"></div>
-    </div>
-    <div class="sub-panel">
-      <h4>📈 Podgląd online kanału</h4>
-      <div class="row"><select id="sc-chart-ch" onchange="scDrawChart()"></select></div>
-      <div class="chart-container small"><canvas id="scChart"></canvas></div>
-    </div>
-  </div>
-  <h4 style="margin:14px 0 6px">Dane godzinowe SCADA – wybrana doba</h4>
-  <div class="scroll" style="max-height:420px"><table><thead id="sc-hour-head"></thead><tbody id="sc-hour-body"></tbody></table></div>
-</div>
-
 <!-- STATYSTYKI -->
 <div class="panel">
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px">
@@ -339,12 +301,6 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="scroll" style="max-height:380px"><table><thead id="stats-shift-head"></thead><tbody id="stats-shift-body"></tbody></table></div>
   <h3 style="font-size:.95rem;margin:16px 0 6px">Rozbicie na produkty (produkcja t / energia kWh / gaz m³ / koszt zł / zł·t⁻¹)</h3>
   <div class="scroll" style="max-height:380px"><table><thead id="stats-product-head"></thead><tbody id="stats-product-body"></tbody></table></div>
-  <h3 style="font-size:.95rem;margin:16px 0 6px">🖥️ SCADA: woda, gaz z przepływomierza vs plan, waga taśmowa</h3>
-  <div class="chart-container small"><canvas id="statsScadaChart"></canvas></div>
-  <div class="scroll" style="max-height:380px;margin-top:8px"><table><thead id="stats-sc-head"></thead><tbody id="stats-sc-body"></tbody></table></div>
-  <h3 style="font-size:.95rem;margin:16px 0 6px">🖥️ SCADA: silniki (godziny pracy, starty), silosy (poziom), palniki (temperatura)</h3>
-  <div class="scroll" style="max-height:380px"><table><thead id="stats-sc2-head"></thead><tbody id="stats-sc2-body"></tbody></table></div>
-  <div class="row" style="margin-top:8px"><button onclick="exportScadaCSV()">📥 Eksport statystyk SCADA (CSV)</button></div>
 </div>
 </div>
 
@@ -423,8 +379,8 @@ function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){} tr
 
 // ---------- Synchronizacja z bazą na serwerze (server.js); bez serwera działa tylko localStorage ----------
 const DB_BASE=location.protocol.startsWith('http')?'':'http://localhost:8787';
-const DB_DATED=['energyplaner_kornica_stats_v2','energyplaner_pv_actual_v1','energyplaner_pv_live_v1','energyplaner_scada_v1']; // obiekty data -> rekord
-const DB_SINGLE=['energyplaner_cfg_v1','energyplaner_scada_cfg_v1','energyplaner_gas_last'];                                    // pojedyncze wartości
+const DB_DATED=['energyplaner_kornica_stats_v2','energyplaner_pv_actual_v1','energyplaner_pv_live_v1']; // obiekty data -> rekord
+const DB_SINGLE=['energyplaner_cfg_v1','energyplaner_gas_last'];                                    // pojedyncze wartości
 let dbOn=false, dbShadow={}, dbQueue=new Map(), dbTimer=null;
 function dbHeaders(){ const h={'Content-Type':'application/json'}; const t=localStorage.getItem('ep_token'); if(t) h['x-token']=t; return h; }
 function dbBadge(ok,msg){
@@ -490,7 +446,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   buildProductParams();
   restoreUserParams();
   buildInventoryControls();
-  buildScadaUI();
   const cfg = lsGet(LS_CFG,{});
   ['live-url','live-path','live-unit','live-interval','live-auth'].forEach(id=>{ if(cfg[id]!==undefined) $(id).value=cfg[id]; });
   const now = new Date();
@@ -1098,7 +1053,6 @@ function buildRecord(rows,P,d){
   rec.priceSource=weekForecast[d]&&weekForecast[d].isOfficialPSE?'PSE':'szac.';
   rec.avgPrice=rec.grid>0?rec.elecCost/(rec.grid/1000):0;
   rec.recordedAt=new Date().toISOString();
-  rec.scada=scadaRecord(d,rec);
   return JSON.parse(JSON.stringify(rec,(k,v)=>typeof v==='number'?+v.toFixed(3):v));
 }
 
@@ -1121,7 +1075,6 @@ function updateCalculations(){
   $('stat-prod-target-info').innerHTML=PROD_IDS.map(id=>{const t=P.products[id].target,q=rec.products[id].qty;return `${PROD_META[id].name}: ${fmt(q,1)}/${fmt(t,1)} t`;}).join('<br>');
   $('stat-total-cost').innerText=`${fmt(rec.totalCost,2)} zł`;
   $('stat-unit-cost').innerText=`Koszt jedn.: ${fmt(rec.qty>0?rec.totalCost/rec.qty:0,2)} zł/t`;
-  renderScadaKpi(rec);
   renderForecastProductionChart(P);
   renderShiftCards(rec,P); renderProductDay(rec); renderHourlyTable(P); renderMainChart(P);
 }
@@ -1870,282 +1823,6 @@ async function pollLive(){
   }catch(e){ $('live-status').innerText=`⚠️ Błąd: ${e.message} (CORS / URL / ścieżka?)`; }
 }
 
-// ================= SCADA =================
-const LS_SCADA='energyplaner_scada_v1', LS_SCFG='energyplaner_scada_cfg_v1';
-const SC_DEFS=[
-  {id:'water',name:'Woda (zużycie)',kind:'flow',unit:'m³',icon:'💧',path:'water.flow',mode:'flow'},
-  {id:'gas',name:'Gaz ziemny (przepływomierz)',kind:'flow',unit:'m³',icon:'🔥',path:'gas.flow',mode:'flow'},
-  {id:'belt',name:'Waga taśmowa',kind:'flow',unit:'t',icon:'⚖️',path:'belt.rate',mode:'flow'},
-  {id:'silo_calcipril',name:'Silos Calcipril',kind:'level',unit:'t',icon:'🛢️',path:'silo.calcipril'},
-  {id:'silo_granucal',name:'Silos Granucal',kind:'level',unit:'t',icon:'🛢️',path:'silo.granucal'},
-  {id:'silo_maczka',name:'Silos Mączka',kind:'level',unit:'t',icon:'🛢️',path:'silo.maczka'},
-  {id:'burner1',name:'Palnik 1',kind:'temp',unit:'°C',icon:'🌡️',path:'burner1.temp'},
-  {id:'burner2',name:'Palnik 2',kind:'temp',unit:'°C',icon:'🌡️',path:'burner2.temp'},
-  {id:'motor1',name:'Silnik 1',kind:'state',unit:'h',icon:'⚙️',path:'motor1.run'},
-  {id:'motor2',name:'Silnik 2',kind:'state',unit:'h',icon:'⚙️',path:'motor2.run'},
-  {id:'motor3',name:'Silnik 3',kind:'state',unit:'h',icon:'⚙️',path:'motor3.run'},
-  {id:'motor4',name:'Silnik 4',kind:'state',unit:'h',icon:'⚙️',path:'motor4.run'}
-];
-let scTimer=null, scState={}, scPts={};
-const kindLabel={flow:'przepływ / ilość',level:'poziom',temp:'temperatura',state:'praca silnika'};
-
-function buildScadaUI(){
-  const cfg=lsGet(LS_SCFG,{});
-  ['sc-base-url','sc-auth','sc-interval'].forEach(id=>{ if(cfg[id]!==undefined) $(id).value=cfg[id]; });
-  $('sc-channels').innerHTML=SC_DEFS.map(def=>{
-    const c=(cfg.ch&&cfg.ch[def.id])||{};
-    const mode=def.kind==='flow'?`<select id="sc-mode-${def.id}" onchange="saveScCfg()"><option value="flow" ${c.mode!=='counter'?'selected':''}>przepływ (${def.unit}/h)</option><option value="counter" ${c.mode==='counter'?'selected':''}>licznik (${def.unit})</option></select>`:`<span class="note">${kindLabel[def.kind]}</span>`;
-    return `<tr><td><input type="checkbox" id="sc-en-${def.id}" ${c.en===false?'':'checked'} onchange="saveScCfg()"></td>
-      <td>${def.icon} ${def.name}</td>
-      <td><input type="text" id="sc-name-${def.id}" value="${c.name||def.name}" style="width:150px" onchange="saveScCfg();buildScSelects()"></td>
-      <td><input type="text" id="sc-url-${def.id}" value="${c.url||''}" style="width:170px" placeholder="(użyj URL głównego)" onchange="saveScCfg()"></td>
-      <td><input type="text" id="sc-path-${def.id}" value="${c.path||def.path}" style="width:130px" onchange="saveScCfg()"></td>
-      <td>${mode}</td>
-      <td><input type="number" id="sc-scale-${def.id}" value="${c.scale||1}" step="any" style="width:70px" onchange="saveScCfg()"></td>
-      <td id="sc-live-${def.id}">–</td><td id="sc-today-${def.id}">–</td></tr>`;
-  }).join('');
-  buildScSelects();
-  const y=new Date(); y.setDate(y.getDate()-1); $('sc-file-date').value=formatDate(y);
-}
-function buildScSelects(){
-  const cfg=getScCfg();
-  const prev=$('sc-chart-ch').value;
-  $('sc-chart-ch').innerHTML=SC_DEFS.map(d=>`<option value="${d.id}">${d.icon} ${cfg[d.id].name}</option>`).join('');
-  if(prev) $('sc-chart-ch').value=prev;
-  const pf=$('sc-file-ch').value;
-  $('sc-file-ch').innerHTML=`<option value="auto">Automatycznie (kolumna z nazwą tagu)</option>`+SC_DEFS.map(d=>`<option value="${d.id}">${cfg[d.id].name}</option>`).join('');
-  if(pf) $('sc-file-ch').value=pf;
-}
-function getScCfg(){
-  const o={};
-  SC_DEFS.forEach(def=>{
-    const g=id=>$(id)?$(id).value:'';
-    o[def.id]={en:$('sc-en-'+def.id)?$('sc-en-'+def.id).checked:true,name:g('sc-name-'+def.id)||def.name,url:g('sc-url-'+def.id).trim(),
-      path:g('sc-path-'+def.id).trim()||def.path,mode:def.kind==='flow'?(g('sc-mode-'+def.id)||'flow'):'',scale:parseFloat(g('sc-scale-'+def.id))||1};
-  });
-  return o;
-}
-function saveScCfg(){ lsSet(LS_SCFG,{'sc-base-url':$('sc-base-url').value,'sc-auth':$('sc-auth').value,'sc-interval':$('sc-interval').value,ch:getScCfg()}); }
-
-function scStore(){ return lsGet(LS_SCADA,{}); }
-function scBucket(st,d,id){
-  st[d]=st[d]||{};
-  if(!st[d][id]) st[d][id]={sum:Array(24).fill(0),n:Array(24).fill(0),max:Array(24).fill(0),last:Array(24).fill(null),starts:Array(24).fill(0)};
-  return st[d][id];
-}
-function scGetPath(o,p){ return p.split('.').filter(Boolean).reduce((a,k)=>a==null?a:a[k],o); }
-function scToNum(v){
-  if(typeof v==='boolean') return v?1:0;
-  if(typeof v==='string'){ const u=v.trim().toUpperCase(); if(['RUN','ON','TRUE','WORKING','PRACA','START'].includes(u)) return 1; if(['STOP','OFF','FALSE','IDLE','POSTOJ'].includes(u)) return 0; return parseFloat(v.replace(',','.')); }
-  return parseFloat(v);
-}
-function scSim(def){
-  const h=new Date().getHours(), row=hourlyData&&hourlyData[h], r=Math.random();
-  if(def.id==='water') return 2.2+r*.8;
-  if(def.id==='gas') return (row&&row.gasKwh?row.gasKwh/GAS_CONV:12)*(.95+r*.1);
-  if(def.id==='belt') return 1.1+r*.3;
-  if(def.kind==='level'){ const s=scState[def.id]; return (s?s.val:60)-.01*r; }
-  if(def.kind==='temp') return 840+r*40;
-  return r>.05?1:0;
-}
-
-async function scPoll(){
-  const cfg=getScCfg(), base=$('sc-base-url').value.trim(), auth=$('sc-auth').value.trim();
-  const st=scStore(), now=Date.now(), d=todayStr(), h=new Date().getHours(), cache={}; const errs=[];
-  const getJson=url=>{ if(!cache[url]){ const hd={}; if(auth) hd['Authorization']=auth; cache[url]=fetch(url,{headers:hd}).then(r=>{ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); }); } return cache[url]; };
-  let simUsed=false;
-  for(const def of SC_DEFS){
-    const c=cfg[def.id]; if(!c.en) continue;
-    try{
-      let v; const url=c.url||base;
-      if(url){ const j=await getJson(url); v=scToNum(scGetPath(j,c.path)); } else { v=scSim(def); simUsed=true; }
-      if(isNaN(v)) throw new Error('brak wartości: '+c.path);
-      v*=c.scale;
-      const prev=scState[def.id]||{}; const dt=prev.ts?Math.min((now-prev.ts)/1000,300):0;
-      const b=scBucket(st,d,def.id); let on=false;
-      if(def.kind==='flow'){
-        if(c.mode==='counter'){ if(prev.val!==undefined&&v>=prev.val) b.sum[h]+=v-prev.val; }
-        else b.sum[h]+=v*dt/3600;
-        b.last[h]=v;
-      } else if(def.kind==='level'){ b.last[h]=v; b.n[h]++; }
-      else if(def.kind==='temp'){ b.sum[h]+=v; b.n[h]++; b.max[h]=Math.max(b.max[h],v); b.last[h]=v; }
-      else { on=v>0.5; if(on) b.sum[h]+=dt/60; if(on&&!prev.on) b.starts[h]++; b.last[h]=on?1:0; }
-      scState[def.id]={ts:now,val:v,on};
-      (scPts[def.id]=scPts[def.id]||[]).push({t:new Date().toLocaleTimeString('pl-PL'),v}); if(scPts[def.id].length>80) scPts[def.id].shift();
-      $('sc-live-'+def.id).innerText=def.kind==='state'?(on?'🟢 PRACA':'⚪ STOP'):`${fmt(v,2)} ${def.kind==='flow'&&c.mode!=='counter'?def.unit+'/h':def.unit}`;
-    }catch(e){ errs.push(`${c.name}: ${e.message}`); $('sc-live-'+def.id).innerText='⚠️ błąd'; }
-  }
-  lsSet(LS_SCADA,st);
-  $('sc-status').innerText=`Aktywny • ${simUsed?'symulacja (brak URL)':'SCADA'} • ${new Date().toLocaleTimeString('pl-PL')}${errs.length?' • błędy: '+errs.slice(0,2).join('; ')+(errs.length>2?'…':''):''}`;
-  renderScToday(); renderScHourly(); scDrawChart();
-}
-function toggleScada(){
-  if(scTimer){ clearInterval(scTimer); scTimer=null; $('btn-sc').innerText='▶ Start monitoringu SCADA'; $('sc-status').innerText='Zatrzymany'; return; }
-  saveScCfg(); scState={}; scPoll(); scTimer=setInterval(scPoll,Math.max(5,num('sc-interval',30))*1000);
-  $('btn-sc').innerText='⏹ Stop';
-}
-function scDrawChart(){
-  const id=$('sc-chart-ch').value, pts=scPts[id]||[]; const def=SC_DEFS.find(x=>x.id===id); if(!def) return;
-  mkChart('scChart',{type:'line',data:{labels:pts.map(p=>p.t),datasets:[{label:`${def.name} (${def.kind==='state'?'0/1':def.unit})`,data:pts.map(p=>p.v),borderColor:'#0891b2',backgroundColor:'rgba(8,145,178,.12)',fill:true,tension:.25,pointRadius:0,stepped:def.kind==='state'}]},options:{responsive:true,maintainAspectRatio:false,animation:false}});
-}
-
-// Podsumowanie dobowe kanału
-function scSummary(b,def){
-  if(!b) return null;
-  const sum=b.sum.reduce((a,c)=>a+c,0), n=b.n.reduce((a,c)=>a+c,0), lastV=[...b.last].reverse().find(v=>v!==null&&v!==undefined);
-  if(def.kind==='flow') return {total:sum};
-  if(def.kind==='level') return {last:lastV};
-  if(def.kind==='temp') return n>0?{avg:sum/n,max:Math.max(...b.max)}:null;
-  return {hours:sum/60,starts:b.starts.reduce((a,c)=>a+c,0)};
-}
-function scSummaryText(s,def){
-  if(!s) return '–';
-  if(def.kind==='flow') return `${fmt(s.total,2)} ${def.unit}`;
-  if(def.kind==='level') return s.last==null?'–':`${fmt(s.last,2)} ${def.unit}`;
-  if(def.kind==='temp') return `śr. ${fmt(s.avg,0)} / max ${fmt(s.max,0)} °C`;
-  return `${fmt(s.hours,2)} h • ${s.starts} startów`;
-}
-function renderScToday(){
-  const day=scStore()[selectedDateStr]||{};
-  SC_DEFS.forEach(def=>{ const el=$('sc-today-'+def.id); if(el) el.innerText=scSummaryText(scSummary(day[def.id],def),def); });
-}
-function renderScHourly(){
-  if(!$('sc-hour-head')) return;
-  renderScToday();
-  const cfg=getScCfg(), day=scStore()[selectedDateStr]||{}; const defs=SC_DEFS.filter(d=>cfg[d.id].en||day[d.id]);
-  $('sc-hour-head').innerHTML=`<tr><th>Godz.</th>${defs.map(d=>`<th>${d.icon} ${cfg[d.id].name} (${d.kind==='state'?'min pracy':d.kind==='temp'?'śr. °C':d.unit})</th>`).join('')}<th>Gaz plan (m³)</th></tr>`;
-  $('sc-hour-body').innerHTML=Array.from({length:24},(_,h)=>{
-    const cells=defs.map(d=>{
-      const b=day[d.id]; if(!b) return '<td>–</td>';
-      if(d.kind==='flow') return `<td>${fmt(b.sum[h],2)}</td>`;
-      if(d.kind==='level') return `<td>${b.last[h]==null?'–':fmt(b.last[h],2)}</td>`;
-      if(d.kind==='temp') return `<td>${b.n[h]?fmt(b.sum[h]/b.n[h],0):'–'}</td>`;
-      return `<td>${fmt(b.sum[h],1)}</td>`;
-    }).join('');
-    const pl=hourlyData[h]&&hourlyData[h].gasM3!==undefined?fmt(hourlyData[h].gasM3,2):'–';
-    return `<tr><td><strong>${String(h).padStart(2,'0')}:00</strong></td>${cells}<td>${pl}</td></tr>`;
-  }).join('');
-}
-
-// Rekord SCADA do statystyk
-function scadaRecord(d,rec){
-  const day=scStore()[d]; if(!day||!Object.keys(day).length) return null;
-  const cfg=getScCfg();
-  const out={water:0,gasMeter:0,belt:0,planGas:rec?+(rec.gasM3||0):0,planQty:rec?+(rec.qty||0):0,shifts:{1:{},2:{},3:{}},motors:{},silos:{},burners:{}};
-  [1,2,3].forEach(s=>out.shifts[s]={water:0,gasMeter:0,belt:0,motorH:0});
-  const byShift=(b,s)=>SHIFTS[s].hours.reduce((a,h)=>a+b.sum[h],0);
-  SC_DEFS.forEach(def=>{
-    const b=day[def.id]; if(!b||!cfg[def.id]) return; const sm=scSummary(b,def); if(!sm) return;
-    if(def.id==='water'||def.id==='gas'||def.id==='belt'){
-      const key=def.id==='gas'?'gasMeter':def.id; out[key]=sm.total; [1,2,3].forEach(s=>out.shifts[s][key]=byShift(b,s));
-    } else if(def.kind==='level'){ if(sm.last!=null) out.silos[def.id]={lastLvl:sm.last}; }
-    else if(def.kind==='temp'){ out.burners[def.id]={tempSum:b.sum.reduce((a,c)=>a+c,0),tempN:b.n.reduce((a,c)=>a+c,0),maxTemp:Math.max(...b.max)}; }
-    else { out.motors[def.id]={runH:sm.hours,starts:sm.starts}; [1,2,3].forEach(s=>out.shifts[s].motorH+=byShift(b,s)/60); }
-  });
-  return out;
-}
-function syncScadaToStats(){
-  const sc=scStore(), h=getHistory(); const P=getParams(); let upd=0, skip=[];
-  Object.keys(sc).forEach(d=>{
-    if(h[d]){ h[d].scada=scadaRecord(d,h[d]); upd++; }
-    else if(plans[d]){ refreshEnv(plans[d],d); calcRows(plans[d],P); h[d]=buildRecord(plans[d],P,d); upd++; }
-    else skip.push(d);
-  });
-  lsSet(LS_STATS,h); calcRows(hourlyData,P); renderStats();
-  const msg=`Zaktualizowano ${upd} dób.`+(skip.length?` Pominięto ${skip.length} dób bez rekordu planu (${skip.slice(0,3).join(', ')}…) – otwórz taki dzień i kliknij „Zapisz dobę do statystyk".`:'');
-  $('sc-import-status').innerText=msg; alert(msg);
-}
-function clearScadaDay(){ const st=scStore(); delete st[selectedDateStr]; lsSet(LS_SCADA,st); renderScHourly(); updateCalculations(); }
-
-function renderScadaKpi(rec){
-  const s=rec&&rec.scada; if(!s){ $('stat-scada').innerText='brak danych'; $('stat-scada-sub').innerText='Uruchom monitoring lub zaimportuj historię SCADA'; return; }
-  $('stat-scada').innerText=`💧 ${fmt(s.water,1)} m³ • ⚖️ ${fmt(s.belt,2)} t`;
-  const dev=s.planGas>0&&s.gasMeter>0?` (${fmt((s.gasMeter/s.planGas-1)*100,1)}% vs plan)`:'';
-  $('stat-scada-sub').innerText=`Gaz licznik: ${fmt(s.gasMeter,1)} m³ / plan ${fmt(s.planGas,1)} m³${dev}`;
-}
-
-// Import historii z pliku
-function importScadaFile(input){
-  const f=input.files[0]; if(!f) return; const d=$('sc-file-date').value, sel=$('sc-file-ch').value, cfg=getScCfg(); const rd=new FileReader();
-  rd.onload=()=>{
-    try{
-      const byName={}; SC_DEFS.forEach(df=>{ byName[df.id.toLowerCase()]=df.id; byName[cfg[df.id].name.toLowerCase()]=df.id; byName[df.name.toLowerCase()]=df.id; });
-      let rows=[];
-      rd.result.split(/\r?\n/).map(l=>l.trim()).filter(Boolean).forEach(l=>{
-        const c=l.split(/[;\t]/).map(s=>s.trim());
-        const m=(c[0]||'').match(/(\d{4}-\d{2}-\d{2}|\d{2}[.\-\/]\d{2}[.\-\/]\d{4})[ T]+(\d{1,2}):(\d{2})/); if(!m) return;
-        let ds=m[1]; if(!/^\d{4}/.test(ds)){ const p=ds.split(/[.\-\/]/); ds=`${p[2]}-${p[1]}-${p[0]}`; }
-        let id,vs; if(sel==='auto'){ if(c.length<3) return; id=byName[c[1].toLowerCase()]; vs=c[2]; } else { id=sel; vs=c[1]; }
-        if(!id||vs===undefined) return; const v=scToNum(vs); if(isNaN(v)) return;
-        rows.push({ds,h:+m[2],t:(+m[2])*60+(+m[3]),id,v});
-      });
-      if(!rows.length) throw new Error('Nie rozpoznano żadnych wierszy (oczekiwano: data godzina ; tag ; wartość).');
-      let info=''; const forDay=rows.filter(r=>r.ds===d); if(forDay.length) rows=forDay; else info='⚠️ Brak wybranej daty w pliku – użyto wszystkich wierszy. ';
-      rows.sort((a,b)=>a.t-b.t);
-      const samples={}; rows.forEach(r=>{ ((samples[r.id]=samples[r.id]||Array.from({length:24},()=>[]))[r.h]).push(r.v); });
-      const st=scStore(), found=[];
-      Object.keys(samples).forEach(id=>{
-        const def=SC_DEFS.find(x=>x.id===id), c=cfg[id]; const b={sum:Array(24).fill(0),n:Array(24).fill(0),max:Array(24).fill(0),last:Array(24).fill(null),starts:Array(24).fill(0)};
-        let prevLast=null, prevOn=false;
-        for(let h=0;h<24;h++){
-          const arr=samples[id][h]; if(!arr.length) continue; const vals=arr.map(v=>v*c.scale), lastV=vals[vals.length-1];
-          if(def.kind==='flow'){ if(c.mode==='counter'){ b.sum[h]=Math.max(0,lastV-(prevLast!==null?prevLast:vals[0])); prevLast=lastV; } else b.sum[h]=vals.reduce((a,x)=>a+x,0)/vals.length; b.last[h]=lastV; }
-          else if(def.kind==='level'){ b.last[h]=lastV; b.n[h]=vals.length; }
-          else if(def.kind==='temp'){ b.sum[h]=vals.reduce((a,x)=>a+x,0); b.n[h]=vals.length; b.max[h]=Math.max(...vals); b.last[h]=lastV; }
-          else { let on=0, starts=0, po=prevOn; vals.forEach(x=>{ const o=x>0.5; if(o) on++; if(o&&!po) starts++; po=o; }); prevOn=po; b.sum[h]=60*on/vals.length; b.starts[h]=starts; b.last[h]=po?1:0; }
-        }
-        st[d]=st[d]||{}; st[d][id]=b; found.push(c.name);
-      });
-      lsSet(LS_SCADA,st);
-      $('sc-import-status').innerHTML=`✅ ${info}Wczytano ${rows.length} rekordów dla ${d}. Kanały: ${found.join(', ')}.`;
-      if(d===selectedDateStr||true){ renderScHourly(); updateCalculations(); }
-    }catch(e){ $('sc-import-status').innerHTML=`❌ ${e.message}`; }
-    input.value='';
-  };
-  rd.readAsText(f);
-}
-
-// Statystyki SCADA (dziennie / miesięcznie / rocznie)
-function renderScadaStats(groups,tot,labels){
-  const cfg=getScCfg(); const S=tot.scada||{}; const sg=g=>g.scada||{};
-  const ton=s=>s.belt>0?s.belt:(s.planQty||0);
-  const devPct=(a,b)=>b>0&&a>0?fmt((a/b-1)*100,1)+'%':'–';
-  if(tot.scada){
-    $('stats-summary-cards').insertAdjacentHTML('beforeend',`
-      <div class="stat-card gas"><div class="stat-title">💧 Woda (SCADA)</div><div class="stat-value">${fmt(S.water||0,1)} m³</div><div class="stat-sub">${ton(S)>0?fmt(S.water/ton(S),2):'–'} m³/t</div></div>
-      <div class="stat-card gas"><div class="stat-title">🔥 Gaz: licznik vs plan</div><div class="stat-value">${fmt(S.gasMeter||0,0)} m³</div><div class="stat-sub">Plan ${fmt(S.planGas||0,0)} m³ • odchyłka ${devPct(S.gasMeter,S.planGas)}</div></div>
-      <div class="stat-card prod"><div class="stat-title">⚖️ Waga taśmowa vs plan</div><div class="stat-value">${fmt(S.belt||0,1)} t</div><div class="stat-sub">Plan ${fmt(S.planQty||0,1)} t • odchyłka ${devPct(S.belt,S.planQty)}</div></div>`);
-  }
-  // Tabela A: bilans
-  $('stats-sc-head').innerHTML=`<tr><th>Okres</th><th>Woda m³</th><th>Woda m³/t</th><th>Gaz licznik m³</th><th>Gaz plan m³</th><th>Odch. gazu</th><th>Waga t</th><th>Prod. plan t</th><th>Odch. t</th>${['I','II','III'].map(z=>`<th>Woda zm.${z}</th>`).join('')}${['I','II','III'].map(z=>`<th>Gaz zm.${z}</th>`).join('')}${['I','II','III'].map(z=>`<th>Waga zm.${z}</th>`).join('')}</tr>`;
-  const rowA=(label,g,cls='')=>{ const s=sg(g); const sh=k=>[1,2,3].map(i=>`<td>${fmt(s.shifts&&s.shifts[i]?s.shifts[i][k]:0,1)}</td>`).join('');
-    return `<tr class="${cls}"><td><strong>${label}</strong></td><td>${fmt(s.water,1)}</td><td>${ton(s)>0?fmt(s.water/ton(s),2):'–'}</td><td>${fmt(s.gasMeter,1)}</td><td>${fmt(s.planGas,1)}</td><td>${devPct(s.gasMeter,s.planGas)}</td><td>${fmt(s.belt,2)}</td><td>${fmt(s.planQty,2)}</td><td>${devPct(s.belt,s.planQty)}</td>${sh('water')}${sh('gasMeter')}${sh('belt')}</tr>`; };
-  const withSc=groups.filter(g=>g.scada);
-  $('stats-sc-body').innerHTML=withSc.length?withSc.map(g=>rowA(periodLabel(g),g)).join('')+rowA('SUMA',tot,'row-total'):`<tr><td colspan="18" class="note" style="padding:14px">Brak danych SCADA w wybranym okresie. Uruchom monitoring albo zaimportuj historię, potem „Przenieś dane SCADA do statystyk".</td></tr>`;
-  // Tabela B: silniki, silosy, palniki
-  const motors=SC_DEFS.filter(d=>d.kind==='state'&&cfg[d.id].en), silos=SC_DEFS.filter(d=>d.kind==='level'&&cfg[d.id].en), burners=SC_DEFS.filter(d=>d.kind==='temp'&&cfg[d.id].en);
-  $('stats-sc2-head').innerHTML=`<tr><th>Okres</th><th>Silniki h zm.I</th><th>zm.II</th><th>zm.III</th>${motors.map(m=>`<th>${cfg[m.id].name} h</th><th>starty</th>`).join('')}${silos.map(m=>`<th>${cfg[m.id].name} (${m.unit}, koniec okresu)</th>`).join('')}${burners.map(m=>`<th>${cfg[m.id].name} śr. °C</th><th>max °C</th>`).join('')}</tr>`;
-  const rowB=(label,g,cls='')=>{ const s=sg(g);
-    return `<tr class="${cls}"><td><strong>${label}</strong></td>${[1,2,3].map(i=>`<td>${fmt(s.shifts&&s.shifts[i]?s.shifts[i].motorH:0,1)}</td>`).join('')}${motors.map(m=>{const x=(s.motors||{})[m.id]||{};return `<td>${fmt(x.runH,1)}</td><td>${x.starts||0}</td>`;}).join('')}${silos.map(m=>{const x=(s.silos||{})[m.id];return `<td>${x?fmt(x.lastLvl,2):'–'}</td>`;}).join('')}${burners.map(m=>{const x=(s.burners||{})[m.id];return x&&x.tempN>0?`<td>${fmt(x.tempSum/x.tempN,0)}</td><td>${fmt(x.maxTemp,0)}</td>`:'<td>–</td><td>–</td>';}).join('')}</tr>`; };
-  $('stats-sc2-body').innerHTML=withSc.length?withSc.map(g=>rowB(periodLabel(g),g)).join('')+rowB('SUMA / koniec okresu',tot,'row-total'):`<tr><td colspan="${4+motors.length*2+silos.length+burners.length*2}" class="note" style="padding:14px">Brak danych SCADA.</td></tr>`;
-  // Wykres
-  mkChart('statsScadaChart',{type:'bar',data:{labels,datasets:[
-    {type:'bar',label:'Woda (m³)',data:groups.map(g=>+(sg(g).water||0).toFixed(1)),backgroundColor:'#0ea5e9',yAxisID:'y'},
-    {type:'bar',label:'Gaz – licznik (m³)',data:groups.map(g=>+(sg(g).gasMeter||0).toFixed(1)),backgroundColor:'#0891b2',yAxisID:'y'},
-    {type:'line',label:'Gaz – plan (m³)',data:groups.map(g=>g.scada?+(sg(g).planGas||0).toFixed(1):null),borderColor:'#ef4444',borderDash:[5,5],yAxisID:'y'},
-    {type:'line',label:'Waga taśmowa (t)',data:groups.map(g=>+(sg(g).belt||0).toFixed(2)),borderColor:'#4f46e5',yAxisID:'y2'}]},
-    options:{responsive:true,maintainAspectRatio:false,scales:{y:{title:{display:true,text:'m³'}},y2:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'t'}}}}});
-}
-function exportScadaCSV(){
-  const groups=aggregate(); const cfg=getScCfg(); const f=v=>typeof v==='number'?String(+v.toFixed(2)).replace('.',','):(v??'');
-  const motors=SC_DEFS.filter(d=>d.kind==='state'), silos=SC_DEFS.filter(d=>d.kind==='level'), burners=SC_DEFS.filter(d=>d.kind==='temp');
-  let csv=['Okres','Woda_m3','Gaz_licznik_m3','Gaz_plan_m3','Waga_t','Prod_plan_t',...motors.map(m=>cfg[m.id].name+'_h'),...silos.map(m=>cfg[m.id].name+'_poziom'),...burners.flatMap(m=>[cfg[m.id].name+'_sr_C',cfg[m.id].name+'_max_C'])].join(';')+'\n';
-  groups.filter(g=>g.scada).forEach(g=>{ const s=g.scada;
-    csv+=[g.key,s.water,s.gasMeter,s.planGas,s.belt,s.planQty,...motors.map(m=>(s.motors[m.id]||{}).runH),...silos.map(m=>(s.silos[m.id]||{}).lastLvl),
-      ...burners.flatMap(m=>{const x=s.burners[m.id]; return x&&x.tempN>0?[x.tempSum/x.tempN,x.maxTemp]:['','']; })].map(f).join(';')+'\n'; });
-  dl(csv,`Statystyki_SCADA_${statsView}_Stara_Kornica.csv`);
-}
-
 // ---------- Statystyki ----------
 function getHistory(){ return lsGet(LS_STATS,{}); }
 function saveDailyRecordToStats(){
@@ -2226,7 +1903,6 @@ function renderStats(){
   const sCol=['#f59e0b','#6366f1','#0f172a'];
   mkChart('statsShiftChart',{type:'bar',data:{labels,datasets:[1,2,3].map(s=>({label:`Zmiana ${sc[s-1]}`,data:groups.map(g=>g.shifts&&g.shifts[s]?+g.shifts[s].grid.toFixed(0):0),backgroundColor:sCol[s-1]}))},options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'kWh z sieci'}}}}});
   mkChart('statsProdChart',{type:'bar',data:{labels,datasets:[...PROD_IDS.map(id=>({type:'bar',label:PROD_META[id].name+' (t)',data:groups.map(g=>g.products&&g.products[id]?+g.products[id].qty.toFixed(2):0),backgroundColor:PROD_META[id].color,stack:'p',yAxisID:'y'})),{type:'line',label:'Koszt energii (zł)',data:groups.map(g=>+(g.totalCost||0).toFixed(0)),borderColor:'#7c3aed',yAxisID:'y2',tension:.3}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{stacked:true},y:{stacked:true,title:{display:true,text:'t'}},y2:{position:'right',grid:{drawOnChartArea:false},title:{display:true,text:'zł'}}}}});
-  renderScadaStats(groups,tot,labels);
 }
 
 function exportStatsCSV(){
