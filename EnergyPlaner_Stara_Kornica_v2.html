@@ -141,7 +141,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
-  <p class="note">Wpisz stany i maksymalne pojemności magazynów. Plan uwzględnia zamówienia Calciprilu/Granucalu oraz stan mączki: 1 t mączki na 6 t Calciprilu i 0,6 t na 6 t Granucalu. Mączka jest produkowana tylko na potrzeby zaplanowanych produktów, maksymalnie 40 t/dobę, z uwzględnieniem jej zapasu i pojemności magazynu. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
+  <p class="note">Wpisz stany i maksymalne pojemności magazynów. Plan uwzględnia zamówienia Calciprilu/Granucalu oraz zużycie mączki na godzinę pracy każdej linii (parametry można zmienić w sekcji „Parametry produktów”). Mączka jest produkowana tylko na potrzeby zaplanowanych produktów, maksymalnie 40 t/dobę, z uwzględnieniem jej zapasu i pojemności magazynu. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
   <div class="inventory-grid" id="inventory-stock-inputs"></div>
   <div id="pickup-order-list"></div>
   <p class="note" id="pickup-order-status" role="status" style="margin-top:6px"></p>
@@ -166,7 +166,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
     <span id="status-text">⏳ Pobieranie danych...</span>
     <span id="weather-live-badge" style="font-weight:700;color:#b45309;background:#fef3c7;padding:4px 10px;border-radius:6px">☀️ PV: ładowanie...</span>
   </div>
-  <div class="banner-row"><strong>🏭 Parametry produktów (zużycie „ponad postój" dla jednej linii przy nominalnej wydajności):</strong></div>
+  <div class="banner-row"><strong>🏭 Parametry produktów (wydajność i zużycie „ponad postój" jednej linii; stawki mączki dotyczą godziny pracy):</strong></div>
   <div class="prod-params" id="prod-params"></div>
   <div class="banner-row">
     <div class="param-group">
@@ -367,8 +367,8 @@ const LAT = 52.1869, LON = 22.9469;
 const GAS_CONV = 10.972; // kWh/m3
 const PROD_IDS = ['calcipril','granucal','maczka'];
 const PROD_META = {
-  calcipril:{name:'Calcipril',color:'#9333ea',rate:6.0,el:110,gas:75,target:10},
-  granucal:{name:'Granucal',color:'#0891b2',rate:6.0,el:120,gas:85,target:8},
+  calcipril:{name:'Calcipril',color:'#9333ea',rate:8.0,mealRate:1.0,el:110,gas:75,target:10},
+  granucal:{name:'Granucal',color:'#0891b2',rate:8.0,mealRate:0.6,el:120,gas:85,target:8},
   maczka:{name:'Mączka',color:'#d97706',rate:1.2,el:80,gas:50,target:8}
 };
 const SHIFTS = {
@@ -497,6 +497,7 @@ function buildProductParams(){
     return `<div class="prod-box" style="border-color:${m.color}">
       <strong style="color:${m.color}">${m.name}</strong>
       <label>t/h <input type="number" id="p-rate-${id}" value="${m.rate}" step="0.1" oninput="onProdParamChange()"></label>
+      ${m.mealRate!==undefined?`<label>Mączka t/h <input type="number" id="p-meal-rate-${id}" value="${m.mealRate}" min="0" step="0.1" oninput="onProdParamChange()"></label>`:''}
       <label>kW prąd <input type="number" id="p-el-${id}" value="${m.el}" step="5" oninput="onProdParamChange()"></label>
       <label>kW gaz <input type="number" id="p-gas-${id}" value="${m.gas}" step="5" oninput="onProdParamChange()"></label>
       <label>Cel (t/dobę) <input type="number" id="p-target-${id}" value="${m.target}" step="1" oninput="onProdParamChange()"></label>
@@ -510,12 +511,12 @@ function restoreUserParams(){
     'gas-distribution-variable','gas-distribution-fixed','gas-subscription','gas-standby',
     'capacity-fee-2026','capacity-fee-2027-q1','capacity-fee-2027-q2','capacity-fee-2027-q3','capacity-fee-2027-q4',
     'capacity-fee-other','capacity-fee-start','capacity-fee-end',
-    ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])]
+    ...PROD_IDS.flatMap(id=>['p-rate-'+id,...(PROD_META[id].mealRate!==undefined?['p-meal-rate-'+id]:[]),'p-el-'+id,'p-gas-'+id,'p-target-'+id])]
     .forEach(id=>{ if(saved[id]!==undefined) $(id).value=saved[id]; });
   if(typeof saved.capacityFeeEnabled==='boolean') $('capacity-fee-enabled').checked=saved.capacityFeeEnabled;
   if(typeof saved.capacityFeeWeekdays==='boolean') $('capacity-fee-weekdays').checked=saved.capacityFeeWeekdays;
-  if(Number(saved['p-rate-calcipril'])===1) $('p-rate-calcipril').value=PROD_META.calcipril.rate;
-  if(Number(saved['p-rate-granucal'])===0.8) $('p-rate-granucal').value=PROD_META.granucal.rate;
+  if([1,6].includes(Number(saved['p-rate-calcipril']))) $('p-rate-calcipril').value=PROD_META.calcipril.rate;
+  if([0.8,6].includes(Number(saved['p-rate-granucal']))) $('p-rate-granucal').value=PROD_META.granucal.rate;
   if(typeof saved.forceTargets==='boolean') $('force-targets').checked=saved.forceTargets;
 }
 function persistUserParams(){
@@ -524,7 +525,7 @@ function persistUserParams(){
       'gas-distribution-variable','gas-distribution-fixed','gas-subscription','gas-standby',
       'capacity-fee-2026','capacity-fee-2027-q1','capacity-fee-2027-q2','capacity-fee-2027-q3','capacity-fee-2027-q4',
       'capacity-fee-other','capacity-fee-start','capacity-fee-end',
-      ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])];
+      ...PROD_IDS.flatMap(id=>['p-rate-'+id,...(PROD_META[id].mealRate!==undefined?['p-meal-rate-'+id]:[]),'p-el-'+id,'p-gas-'+id,'p-target-'+id])];
     const saved={}; ids.forEach(id=>saved[id]=$(id).value); saved.forceTargets=$('force-targets').checked;
     saved.capacityFeeEnabled=$('capacity-fee-enabled').checked;
     saved.capacityFeeWeekdays=$('capacity-fee-weekdays').checked;
@@ -710,7 +711,9 @@ function fullBatchTarget(target,room,rate){
 
 function getParams(){
   const products={};
-  PROD_IDS.forEach(id=>products[id]={rate:num('p-rate-'+id,1),el:num('p-el-'+id,100),gas:num('p-gas-'+id,50),target:num('p-target-'+id,0)});
+  PROD_IDS.forEach(id=>products[id]={rate:num('p-rate-'+id,1),
+    mealRate:PROD_META[id].mealRate!==undefined?Math.max(0,num('p-meal-rate-'+id,PROD_META[id].mealRate)):0,
+    el:num('p-el-'+id,100),gas:num('p-gas-'+id,50),target:num('p-target-'+id,0)});
   const gasTge=num('gas-tge-mwh',195.5), gasExtra=num('gas-extra',0);
   const gasDistributionVariable=Math.max(0,num('gas-distribution-variable',0));
   const gasDistributionFixed=Math.max(0,num('gas-distribution-fixed',0));
@@ -1498,7 +1501,8 @@ function buildForecastProductionPlan(P=getParams()){
     calcRows(rows,dailyParams);
     const dailyProduced=Object.fromEntries(PROD_IDS.map(id=>[id,rows.reduce((sum,row)=>sum
       +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0)]));
-    const mealUsed=dailyProduced.calcipril/6+dailyProduced.granucal*0.6/6;
+    const mealUsed=['calcipril','granucal'].reduce((sum,id)=>sum
+      +dailyProduced[id]/Math.max(P.products[id].rate,1e-9)*P.products[id].mealRate,0);
     PROD_IDS.forEach(id=>{
       const produced=dailyProduced[id];
       const productCost=rows.reduce((sum,row)=>sum+(row.alloc?.[id]?.cost||0),0);
@@ -1771,8 +1775,7 @@ function planForecastProductionDay(rows,P){
   let mealUsed=0;
   const mealProductionByHour=Array(rows.length).fill(0);
   const competing=new Set(['calcipril','granucal']);
-  const mealPerTon={calcipril:1/6,granucal:0.6/6};
-  const mealForProduct=id=>mealPerTon[id]*P.products[id].rate;
+  const mealForProduct=id=>P.products[id].mealRate||0;
   const hourCost=(hour,id)=>{
     const row=rows[hour];
     const loadBefore=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
@@ -1811,7 +1814,7 @@ function planForecastProductionDay(rows,P){
           if(id!=='maczka'){
             if(mealUsed+mealForProduct(id)>(P.rawMealAvailable||0)+1e-9) return;
             if(mealUsed+mealForProduct(id)>(P.rawMealStock||0)+1e-9
-              &&(!canAdd(hour,'maczka')||!regularPriceAllowed(hour,'maczka'))) return;
+              &&(!canAdd(hour,'maczka')||!(P.force||regularPriceAllowed(hour,'maczka')))) return;
           }
           const score=hourCost(hour,id);
           const candidate={hour,id,score,rate:P.products[id].rate};
