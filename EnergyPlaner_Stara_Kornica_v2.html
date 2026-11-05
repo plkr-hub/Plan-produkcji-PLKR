@@ -137,7 +137,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="chart-container small"><canvas id="marketForecastChart"></canvas></div>
   <p class="note" id="market-forecast-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">🏭 Planowana produkcja godzinowa na 14 dni</h3>
-  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić do 200 zł/MWh ponad limit. Wyższa cena jest dopuszczona tylko wtedy, gdy PV obniża efektywny koszt energii z sieci do limitu.</p>
+  <p class="note" style="margin-bottom:6px">Calcipril i Granucal są planowane zamiennie, nigdy równocześnie; maksymalnie dwa produkty w godzinie. Produkcja jest planowana przy cenie do ustawionego limitu; przerwę 1–2 h można wypełnić do 200 zł/MWh ponad limit. Wyższa cena jest dopuszczona tylko wtedy, gdy PV obniża efektywny koszt energii z sieci do limitu. Harmonogram dobowy i 14-dniowy korzystają z tego samego planu — ręczne zmiany godzin są synchronizowane w obu widokach. Koszty gazu liczone są z ceny TGE, a „kW gaz” oznacza zużycie linii.</p>
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
@@ -172,15 +172,15 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
     <div class="param-group">
       <strong style="color:var(--primary)">⚡ PRĄD &amp; PV:</strong>
       <label style="color:var(--solar);font-weight:700">☀️ PV (kWp) <input type="number" id="pv-peak-power" value="500" step="10" oninput="recalcPVAndRender()"></label>
-      <label>Max cena (zł/MWh) <input type="number" id="max-price-threshold" value="800" step="10" style="color:var(--green);font-weight:700" oninput="updateCalculations();updateMarketThreshold()"></label>
-      <label>Postój zakładu (kW) <input type="number" id="load-standby" value="45" step="5" oninput="updateCalculations()"></label>
-      <label title="Opłaty dystrybucyjne, akcyza itp. doliczane do ceny RCE">Dopłata prąd (zł/MWh) <input type="number" id="elec-extra" value="0" step="10" oninput="updateCalculations()"></label>
+      <label>Max cena (zł/MWh) <input type="number" id="max-price-threshold" value="800" step="10" style="color:var(--green);font-weight:700" oninput="autoOptimizeSchedule();updateMarketThreshold()"></label>
+      <label>Postój zakładu (kW) <input type="number" id="load-standby" value="45" step="5" oninput="autoOptimizeSchedule()"></label>
+      <label title="Opłaty dystrybucyjne, akcyza itp. doliczane do ceny RCE">Dopłata prąd (zł/MWh) <input type="number" id="elec-extra" value="0" step="10" oninput="autoOptimizeSchedule()"></label>
     </div>
     <div class="param-group">
       <strong style="color:var(--gas)">🔥 GAZ:</strong>
-      <label>TGE (zł/MWh) <input type="number" id="gas-tge-mwh" value="195.50" step="1" style="font-weight:700" oninput="updateCalculations()"></label>
-      <label>Dopłata (zł/MWh) <input type="number" id="gas-extra" value="0" step="5" oninput="updateCalculations()"></label>
-      <label>Postój (kW) <input type="number" id="gas-standby" value="35" step="5" oninput="updateCalculations()"></label>
+      <label>TGE (zł/MWh) <input type="number" id="gas-tge-mwh" value="195.50" step="1" style="font-weight:700" oninput="autoOptimizeSchedule()"></label>
+      <label>Dopłata (zł/MWh) <input type="number" id="gas-extra" value="0" step="5" oninput="autoOptimizeSchedule()"></label>
+      <label>Postój (kW) <input type="number" id="gas-standby" value="35" step="5" oninput="autoOptimizeSchedule()"></label>
       <span id="gas-m3-info" class="note"></span>
       <label title="Lokalny proxy (proxy.js) omija blokadę CORS">Proxy: <input type="text" id="gas-proxy-url" value="http://localhost:8787" style="width:150px"></label>
       <button onclick="refreshGasOnly()">🔥 Pobierz gaz TGE</button>
@@ -402,6 +402,7 @@ const LS_FORECAST_OVERRIDES='energyplaner_forecast_overrides_v1';
 let selectedDateStr = '';
 let weekForecast = {};   // date -> {hours:[{irrWm2,cloudPct,tempC}], pricesMWh:[24], isOfficialPSE}
 let plans = {};          // date -> rows (zachowuje ręczne zmiany)
+let forecastProductionPlans = {};
 let storedPlans = {};
 let hourlyData = [];
 let charts = {};
@@ -515,9 +516,9 @@ function buildProductParams(){
     return `<div class="prod-box" style="border-color:${m.color}">
       <strong style="color:${m.color}">${m.name}</strong>
       <label>t/h <input type="number" id="p-rate-${id}" value="${m.rate}" step="0.1" oninput="onProdParamChange()"></label>
-      <label>kW prąd <input type="number" id="p-el-${id}" value="${m.el}" step="5" oninput="updateCalculations()"></label>
-      <label>kW gaz <input type="number" id="p-gas-${id}" value="${m.gas}" step="5" oninput="updateCalculations()"></label>
-      <label>Cel (t/dobę) <input type="number" id="p-target-${id}" value="${m.target}" step="1" oninput="updateCalculations()"></label>
+      <label>kW prąd <input type="number" id="p-el-${id}" value="${m.el}" step="5" oninput="onProdParamChange()"></label>
+      <label>kW gaz <input type="number" id="p-gas-${id}" value="${m.gas}" step="5" oninput="onProdParamChange()"></label>
+      <label>Cel (t/dobę) <input type="number" id="p-target-${id}" value="${m.target}" step="1" oninput="onProdParamChange()"></label>
     </div>`;
   }).join('');
 }
@@ -651,7 +652,8 @@ function inventoryChanged(){
     $('pickup-order-status').textContent=`Nie udało się zapisać ustawień magazynu: ${error.message}`;
     return;
   }
-  renderForecastProductionChart(getParams());
+  syncDailySchedulesFromForecast(getParams());
+  updateCalculations();
 }
 
 function confirmPickupReceived(id){
@@ -677,7 +679,8 @@ function confirmPickupReceived(id){
     return;
   }
   $('pickup-order-status').textContent=`✓ Zatwierdzono odbiór ${fmt(quantity,1)} t ${PROD_META[id].name}; pozostało ${fmt(state.orders[id],1)} t.`;
-  renderForecastProductionChart(getParams());
+  syncDailySchedulesFromForecast(getParams());
+  updateCalculations();
 }
 
 function getInventoryConfig(){
@@ -739,6 +742,7 @@ async function fetchAllOnlineData(){
   ensureForecast();
   const pse=await fetchPSEPricesForWeek(); notes.push(pse.ok>0?`✅ PSE RCE: ${pse.ok} dób`:'⚠️ PSE RCE niedostępne (profil szacunkowy – wklej ceny ręcznie)');
   const gas=await fetchGasTGE(); notes.push(gas.msg);
+  syncDailySchedulesFromForecast();
   st.innerHTML=notes.join(' • ');
   $('weather-live-badge').innerHTML=`☀️ Stara Kornica • ${num('pv-peak-power',500)} kWp`;
   // odśwież wiersze o nowe dane
@@ -803,17 +807,19 @@ async function refreshOfficialPriceData(){
     .map(([date,day])=>[date,day.pricesMWh,day.officialPriceHours,day.isOfficialPSE]));
   try{
     const result=await fetchPSEPricesForWeek(true);
+    const gasUpdate=applyPublishedGasPrice(await loadPublishedPriceCache());
     const after=JSON.stringify(Object.entries(weekForecast)
       .filter(([date])=>date>=todayStr())
       .map(([date,day])=>[date,day.pricesMWh,day.officialPriceHours,day.isOfficialPSE]));
-    if(before===after) return;
+    if(before===after&&!gasUpdate.changed) return;
+    syncDailySchedulesFromForecast();
     Object.keys(plans).forEach(date=>refreshEnv(plans[date],date));
     if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
     renderWeekCards();
     updateCalculations();
     renderPvCompare();
     renderMarketCharts();
-    $('status-text').innerText=`🔄 Prognoza cen i plan zaktualizowane automatycznie • PSE: ${result.ok} dób oficjalnych`;
+    $('status-text').innerText=`🔄 Plan i koszty zaktualizowane automatycznie • PSE: ${result.ok} dób oficjalnych${gasUpdate.price!==null?` • TGE gaz: ${fmt(gasUpdate.price,2)} zł/MWh`:''}`;
   }finally{
     officialPriceRefreshInProgress=false;
   }
@@ -885,13 +891,20 @@ function parseGasFromText(txt){
   }
   return null;
 }
+function applyPublishedGasPrice(cache){
+  const price=Number(cache?.gas?.priceMWh);
+  if(!Number.isFinite(price)||price<30||price>1500) return {price:null,changed:false};
+  const changed=num('gas-tge-mwh',195.5)!==price;
+  const ts=Date.parse(cache.gas.updatedAt||cache.generatedAt)||Date.now();
+  $('gas-tge-mwh').value=price;
+  lsSet('energyplaner_gas_last',{v:price,ts,src:'TGEgasDA cache'});
+  return {price,changed};
+}
 async function fetchGasTGE(){
   const cache=await loadPublishedPriceCache();
-  const cachedPrice=Number(cache?.gas?.priceMWh);
-  if(cachedPrice>=30&&cachedPrice<=1500){
-    const ts=Date.parse(cache.gas.updatedAt||cache.generatedAt)||Date.now();
-    $('gas-tge-mwh').value=cachedPrice; lsSet('energyplaner_gas_last',{v:cachedPrice,ts,src:'TGEgasDA cache'});
-    return {msg:`✅ gaz TGE: ${cachedPrice} zł/MWh (cache ${new Date(ts).toLocaleTimeString('pl-PL')})`};
+  const publishedGas=applyPublishedGasPrice(cache);
+  if(publishedGas.price!==null){
+    return {msg:`✅ gaz TGE: ${publishedGas.price} zł/MWh (cena oficjalna)`};
   }
   const proxy=($('gas-proxy-url').value||'').trim().replace(/\/$/,'');
   const pages=['https://tge.pl/gaz-rdn','https://tge.pl/gas-dam'];
@@ -915,7 +928,9 @@ async function fetchGasTGE(){
 }
 async function refreshGasOnly(){
   $('status-text').innerText='⏳ Pobieranie ceny gazu TGE...';
-  const g=await fetchGasTGE(); $('status-text').innerText=g.msg; renderWeekCards(); updateCalculations();
+  const g=await fetchGasTGE();
+  syncDailySchedulesFromForecast();
+  $('status-text').innerText=g.msg; renderWeekCards(); updateCalculations();
 }
 function extractGasFromPaste(){
   const v=parseGasFromText($('gas-paste-input').value);
@@ -953,6 +968,7 @@ function pvFor(d,h,w,kWp){
 }
 function recalcPVAndRender(){
   Object.keys(plans).forEach(d=>refreshEnv(plans[d],d));
+  syncDailySchedulesFromForecast();
   if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
   renderWeekCards(); updateCalculations(); renderPvCompare(); renderMarketCharts();
 }
@@ -997,24 +1013,21 @@ function persistPlans(){
 }
 function loadDay(d){
   ensureForecast();
+  const forecastPlan=buildForecastProductionPlan(getParams()).rowsByDate.find(day=>day.date===d);
   if(!plans[d]){
     plans[d]=storedPlans[d]?restorePlan(d):newRows(d);
-    if(!storedPlans[d]){
-      const previous=dateObj(d); previous.setDate(previous.getDate()-1);
-      const previousDate=formatDate(previous);
-      const source=plans[previousDate]||(storedPlans[previousDate]?restorePlan(previousDate):null);
-      if(source) applyScheduleRows(source,plans[d]);
-      else optimizeRows(plans[d],getParams());
-    }
   }
-  else refreshEnv(plans[d],d);
+  refreshEnv(plans[d],d);
+  if(forecastPlan) applyScheduleRows(forecastPlan.rows,plans[d]);
   hourlyData=plans[d];
   renderWeekCards(); updateCalculations(); renderPvCompare();
 }
 function copyPlanToNextDay(){
   const next=dateObj(selectedDateStr); next.setDate(next.getDate()+1);
   const d=formatDate(next), target=plans[d]||newRows(d);
-  applyScheduleRows(hourlyData,target); plans[d]=target; refreshEnv(target,d); persistPlans();
+  applyScheduleRows(hourlyData,target); plans[d]=target; refreshEnv(target,d);
+  target.forEach(row=>saveDailyHourOverride(d,row.hour,row));
+  persistPlans();
   selectDayFromCard(d);
 }
 
@@ -1037,12 +1050,14 @@ function optimizeRows(rows,P){
   order.filter(isGood).forEach(r=>{ if(PROD_IDS.some(id=>need[id]>0.001)) assign(r); });
   if(P.force) order.filter(r=>!r.p1).forEach(r=>{ if(PROD_IDS.some(id=>need[id]>0.001)) assign(r); });
 }
-function autoOptimizeSchedule(){ optimizeRows(hourlyData,getParams()); updateCalculations(); }
-function onProdParamChange(){
-  // zmiana wydajności: przelicz ilości w wierszach
+function autoOptimizeSchedule(){
   const P=getParams();
-  hourlyData.forEach(r=>{ if(r.p1) r.q1=P.products[r.p1].rate; if(r.p2) r.q2=P.products[r.p2].rate; });
+  const synced=syncDailySchedulesFromForecast(P);
+  if(!synced||!forecastProductionPlans[selectedDateStr]) optimizeRows(hourlyData,P);
   updateCalculations();
+}
+function onProdParamChange(){
+  autoOptimizeSchedule();
 }
 
 // ---------- Obliczenia ----------
@@ -1131,7 +1146,7 @@ function renderShiftCards(rec,P){
       <div class="metric-row"><span>💰 Koszt razem</span><span>${fmt(s.cost,2)} zł (${fmt(s.qty>0?s.cost/s.qty:0,1)} zł/t)</span></div>
       ${byProd}
       <div style="display:flex;gap:6px;margin-top:10px">
-        <select id="shift-prod-${id}" style="flex:1">${PROD_IDS.map(p=>`<option value="${p}">${PROD_META[p].name}</option>`).join('')}<option value="__2">Calcipril + Granucal</option><option value="__3">Calcipril + Mączka</option><option value="__4">Granucal + Mączka</option></select>
+        <select id="shift-prod-${id}" style="flex:1">${PROD_IDS.map(p=>`<option value="${p}">${PROD_META[p].name}</option>`).join('')}<option value="__3">Calcipril + Mączka</option><option value="__4">Granucal + Mączka</option></select>
         <button class="btn-prod" onclick="setShiftProducts(${id})">▶ Ustaw zmianę</button>
         <button onclick="setShiftStandby(${id})">⏸ Postój</button>
       </div></div>`;
@@ -1139,14 +1154,25 @@ function renderShiftCards(rec,P){
 }
 function setShiftProducts(sid){
   const v=$('shift-prod-'+sid).value; const P=getParams();
-  const combos={__2:['calcipril','granucal'],__3:['calcipril','maczka'],__4:['granucal','maczka']};
+  const combos={__3:['calcipril','maczka'],__4:['granucal','maczka']};
   const list=combos[v]||[v];
   hourlyData.forEach(r=>{ if(r.shiftId!==sid) return;
     r.p1=list[0]; r.q1=P.products[list[0]].rate; r.p2=list[1]||''; r.q2=list[1]?P.products[list[1]].rate:0;
-    r.task=list.map(i=>PROD_META[i].name).join(' + '); });
+    r.task=list.map(i=>PROD_META[i].name).join(' + ');
+    saveDailyHourOverride(selectedDateStr,r.hour,r);
+  });
+  syncDailySchedulesFromForecast(P);
   updateCalculations();
 }
-function setShiftStandby(sid){ hourlyData.forEach(r=>{ if(r.shiftId===sid){r.p1='';r.p2='';r.q1=0;r.q2=0;r.task='Postój ekonomiczny';} }); updateCalculations(); }
+function setShiftStandby(sid){
+  hourlyData.forEach(r=>{
+    if(r.shiftId!==sid) return;
+    r.p1='';r.p2='';r.q1=0;r.q2=0;r.task='Postój ekonomiczny';
+    saveDailyHourOverride(selectedDateStr,r.hour,r);
+  });
+  syncDailySchedulesFromForecast();
+  updateCalculations();
+}
 
 function renderProductDay(rec){
   const rows=[...PROD_IDS,'standby'].map(k=>{
@@ -1178,12 +1204,25 @@ function renderHourlyTable(P){
 }
 function onProdChange(i,slot,val){
   const P=getParams(); const r=hourlyData[i];
-  if(slot===1){ r.p1=val; r.q1=val?P.products[val].rate:0; if(val&&r.p2===val){r.p2='';r.q2=0;} }
-  else { if(val&&r.p1===val){ val=''; } r.p2=val; r.q2=val?P.products[val].rate:0; }
+  if(slot===1){
+    r.p1=val; r.q1=val?P.products[val].rate:0;
+    if(val&&(r.p2===val||(val==='calcipril'&&r.p2==='granucal')||(val==='granucal'&&r.p2==='calcipril'))){r.p2='';r.q2=0;}
+  }else{
+    if(val&&(r.p1===val||(val==='calcipril'&&r.p1==='granucal')||(val==='granucal'&&r.p1==='calcipril'))) val='';
+    r.p2=val; r.q2=val?P.products[val].rate:0;
+  }
   r.task=[r.p1,r.p2].filter(Boolean).map(id=>PROD_META[id].name).join(' + ')||'Postój ekonomiczny';
+  saveDailyHourOverride(selectedDateStr,r.hour,r);
+  syncDailySchedulesFromForecast(P);
   updateCalculations();
 }
-function onQtyChange(i,slot,v){ hourlyData[i]['q'+slot]=parseFloat(v)||0; updateCalculations(); }
+function onQtyChange(i,slot,v){
+  hourlyData[i]['q'+slot]=parseFloat(v)||0;
+  const row=hourlyData[i];
+  saveDailyHourOverride(selectedDateStr,row.hour,row);
+  syncDailySchedulesFromForecast();
+  updateCalculations();
+}
 
 function renderWeekCards(){
   const t=todayStr(); const P=getParams();
@@ -1335,7 +1374,7 @@ function updateMarketThreshold(){
   });
 }
 
-function renderForecastProductionChart(P=getParams()){
+function buildForecastProductionPlan(P=getParams()){
   const dates=Object.keys(weekForecast).filter(date=>date>=todayStr()).sort().slice(0,14);
   const inventory=getInventoryConfig();
   const projectedStock={...inventory.current};
@@ -1351,8 +1390,12 @@ function renderForecastProductionChart(P=getParams()){
         ?Infinity
         :Math.max(0,inventory.maximum[id]-projectedStock[id]);
       const target=hasOrders?Math.max(0,dailyDemand-projectedStock[id]):P.products[id].target;
+      const productionLimit=hasOrders
+        ?Math.max(0,Math.min(room,remainingOrders[id]-projectedStock[id]))
+        :Math.min(target,room);
       dailyParams.products[id]={...P.products[id],
-        target:fullBatchTarget(Math.min(target,room),room,P.products[id].rate)};
+        target:fullBatchTarget(Math.min(target,room),room,P.products[id].rate),
+        productionLimit:fullBatchTarget(productionLimit,room,P.products[id].rate)};
     });
     planForecastProductionDay(rows,dailyParams);
     applyForecastHourOverrides(date,rows,dailyParams);
@@ -1375,6 +1418,30 @@ function renderForecastProductionChart(P=getParams()){
     });
     return {date,rows};
   });
+  return {rowsByDate,inventoryRows,inventory};
+}
+
+function syncDailySchedulesFromForecast(P=getParams()){
+  const {rowsByDate}=buildForecastProductionPlan(P);
+  forecastProductionPlans=Object.fromEntries(rowsByDate.map(day=>[day.date,day.rows]));
+  let synced=0;
+  rowsByDate.forEach(({date})=>{
+    const source=forecastProductionPlans[date];
+    if(!source) return;
+    const target=plans[date]||newRows(date);
+    applyScheduleRows(source,target);
+    refreshEnv(target,date);
+    plans[date]=target;
+    if(date===selectedDateStr) hourlyData=target;
+    synced++;
+  });
+  if(synced) persistPlans();
+  return synced;
+}
+
+function renderForecastProductionChart(P=getParams()){
+  const {rowsByDate,inventoryRows,inventory}=buildForecastProductionPlan(P);
+  forecastProductionPlans=Object.fromEntries(rowsByDate.map(day=>[day.date,day.rows]));
   const labels=rowsByDate.flatMap(({date})=>Array.from({length:24},(_,hour)=>`${date.slice(5)} ${String(hour).padStart(2,'0')}:00`));
   const flattened=rowsByDate.flatMap(day=>day.rows);
   const threshold=P.maxPrice;
@@ -1453,14 +1520,39 @@ function applyForecastHourOverrides(date,rows,P){
   if(!overrides||typeof overrides!=='object') return;
   rows.forEach(row=>{
     if(!Object.prototype.hasOwnProperty.call(overrides,row.hour)) return;
-    const products=overrides[row.hour];
+    const saved=overrides[row.hour];
+    const products=Array.isArray(saved)?saved:saved?.products;
     if(!isValidForecastSelection(products)) return;
+    const quantities=Array.isArray(saved)?[]:saved?.quantities;
     row.p1=products[0]||'';
     row.p2=products[1]||'';
-    row.q1=row.p1?P.products[row.p1].rate:0;
-    row.q2=row.p2?P.products[row.p2].rate:0;
+    const quantity=(index,id)=>{
+      const value=quantities?.[index];
+      return id?(value!==undefined&&value!==''&&Number.isFinite(Number(value))
+        ?Math.max(0,Number(value)):P.products[id].rate):0;
+    };
+    row.q1=quantity(0,row.p1);
+    row.q2=quantity(1,row.p2);
     row.task=products.map(id=>PROD_META[id].name).join(' + ')||'Postój (ręcznie)';
   });
+}
+
+function saveDailyHourOverride(date,hour,row){
+  const overrides=getForecastOverrides();
+  const products=[row.p1,row.p2].filter(Boolean);
+  if(!isValidForecastSelection(products)){
+    $('status-text').textContent='Nie można połączyć Calciprilu z Granucalem ani wybrać więcej niż dwóch produktów.';
+    return false;
+  }
+  if(!overrides[date]||typeof overrides[date]!=='object'||Array.isArray(overrides[date])) overrides[date]={};
+  overrides[date][hour]={products,quantities:products.map(id=>id===row.p1?row.q1:row.q2)};
+  try{
+    localStorage.setItem(LS_FORECAST_OVERRIDES,JSON.stringify(overrides));
+    return true;
+  }catch(error){
+    $('status-text').textContent=`Nie udało się zapisać zmiany harmonogramu: ${error.message}`;
+    return false;
+  }
 }
 
 function openForecastHourEditor(date,hour){
@@ -1470,8 +1562,9 @@ function openForecastHourEditor(date,hour){
   if(!chart||index<0) return;
   const overrides=getForecastOverrides();
   const isManual=Object.prototype.hasOwnProperty.call(overrides[date]||{},hour);
+  const saved=overrides[date]?.[hour];
   const selected=isManual
-    ?overrides[date][hour]
+    ?(Array.isArray(saved)?saved:saved?.products||[])
     :PROD_IDS.filter((id,datasetIndex)=>Number(chart.data.datasets[datasetIndex]?.data[index])>0);
   editingForecastHour={date,hour};
   $('forecast-hour-title').textContent=`✏️ Edycja: ${date}, ${String(hour).padStart(2,'0')}:00`;
@@ -1540,7 +1633,8 @@ function saveForecastHourEdit(){
     return;
   }
   closeForecastHourEditor();
-  renderForecastProductionChart(getParams());
+  syncDailySchedulesFromForecast(getParams());
+  updateCalculations();
 }
 
 function resetForecastHourEdit(){
@@ -1557,7 +1651,8 @@ function resetForecastHourEdit(){
     return;
   }
   closeForecastHourEditor();
-  renderForecastProductionChart(getParams());
+  syncDailySchedulesFromForecast(getParams());
+  updateCalculations();
 }
 
 function planForecastProductionDay(rows,P){
@@ -1566,15 +1661,29 @@ function planForecastProductionDay(rows,P){
   const requiredSlots=Object.fromEntries(PROD_IDS.map(id=>[
     id,target[id]>0?Math.ceil(target[id]/P.products[id].rate):0
   ]));
+  const maxSlots=Object.fromEntries(PROD_IDS.map(id=>{
+    const limit=P.products[id].productionLimit??target[id];
+    return [id,limit>0?Math.floor((limit+1e-9)/P.products[id].rate):0];
+  }));
   const selectedSlots=Object.fromEntries(PROD_IDS.map(id=>[id,0]));
   const competing=new Set(['calcipril','granucal']);
   const hourCost=(hour,id)=>{
     const row=rows[hour];
-    const load=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum+(selected[hour].has(product)?P.products[product].el:0),P.products[id].el);
-    const gridShare=Math.max(0,load-row.pvKwh)/load;
-    return (row.priceMWh+P.elecExtra)*gridShare;
+    const loadBefore=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
+      +(selected[hour].has(product)?P.products[product].el:0),0);
+    const loadAfter=loadBefore+P.products[id].el;
+    const gridBefore=Math.max(0,loadBefore-row.pvKwh);
+    const gridAfter=Math.max(0,loadAfter-row.pvKwh);
+    const electricityCost=(gridAfter-gridBefore)*(row.priceMWh+P.elecExtra)/1000;
+    const gasCost=P.products[id].gas*(P.gasTge+P.gasExtra)/1000;
+    return (electricityCost+gasCost)/P.products[id].rate;
   };
-  const pvCompensated=(hour,id)=>hourCost(hour,id)<=P.maxPrice;
+  const pvCompensated=(hour,id)=>{
+    const row=rows[hour];
+    const load=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
+      +(selected[hour].has(product)?P.products[product].el:0),P.products[id].el);
+    return (row.priceMWh+P.elecExtra)*Math.max(0,load-row.pvKwh)/load<=P.maxPrice;
+  };
   const regularPriceAllowed=(hour,id)=>rows[hour].priceMWh<=P.maxPrice||pvCompensated(hour,id);
   const bridgePriceAllowed=(hour,id)=>rows[hour].priceMWh>P.maxPrice
     &&(rows[hour].priceMWh<=P.maxPrice+200||pvCompensated(hour,id));
@@ -1613,6 +1722,7 @@ function planForecastProductionDay(rows,P){
       const candidates=adjacentProducts
         .filter(id=>Number.isFinite(rows[fill].priceMWh)
           &&bridgePriceAllowed(fill,id)
+          &&selectedSlots[id]<maxSlots[id]
           &&canAdd(fill,id))
         .sort((a,b)=>hourCost(fill,a)-hourCost(fill,b));
       if(candidates.length){
@@ -1626,8 +1736,12 @@ function planForecastProductionDay(rows,P){
     const products=[...selected[hour]];
     row.p1=products[0]||'';
     row.p2=products[1]||'';
-    row.q1=row.p1?Math.min(P.products[row.p1].rate,target[row.p1]/selectedSlots[row.p1]):0;
-    row.q2=row.p2?Math.min(P.products[row.p2].rate,target[row.p2]/selectedSlots[row.p2]):0;
+    row.q1=row.p1?(row.p1==='calcipril'||row.p1==='granucal'
+      ?P.products[row.p1].rate
+      :Math.min(P.products[row.p1].rate,target[row.p1]/selectedSlots[row.p1])):0;
+    row.q2=row.p2?(row.p2==='calcipril'||row.p2==='granucal'
+      ?P.products[row.p2].rate
+      :Math.min(P.products[row.p2].rate,target[row.p2]/selectedSlots[row.p2])):0;
     row.task=products.map(id=>PROD_META[id].name).join(' + ')||'Postój ekonomiczny';
   });
 }
@@ -1697,7 +1811,9 @@ function applyManualPv(){
 function clearPvActual(){ const d=$('pv-file-date').value; const all=lsGet(LS_PVACT,{}); delete all[d]; lsSet(LS_PVACT,all); $('pv-import-status').innerHTML=`Usunięto dane rzeczywiste dla ${d}.`; afterPvDataChange(d); }
 function afterPvDataChange(d){
   if(plans[d]) refreshEnv(plans[d],d);
-  if(d===selectedDateStr){ hourlyData=plans[d]||hourlyData; updateCalculations(); }
+  syncDailySchedulesFromForecast();
+  if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
+  updateCalculations();
   renderWeekCards(); renderPvCompare(); renderMarketCharts();
 }
 function renderPvCompare(){
@@ -1744,7 +1860,13 @@ async function pollLive(){
     $('live-kw').innerText=`${fmt(kw,1)} kW`; $('live-today').innerText=`${fmt(store[dd].reduce((a,b)=>a+b,0),1)} kWh`;
     $('live-status').innerText=`Aktywny • ${url?'API':'symulacja'} • ${livePts[livePts.length-1].t}`;
     mkChart('liveChart',{type:'line',data:{labels:livePts.map(p=>p.t),datasets:[{label:'Moc PV (kW)',data:livePts.map(p=>p.v),borderColor:'#d97706',backgroundColor:'rgba(217,119,6,.15)',fill:true,tension:.3,pointRadius:0}]},options:{responsive:true,maintainAspectRatio:false,animation:false}});
-    if(plans[dd]){ refreshEnv(plans[dd],dd); if(dd===selectedDateStr){ hourlyData=plans[dd]; updateCalculations(); } renderPvCompare(); }
+    if(plans[dd]){
+      refreshEnv(plans[dd],dd);
+      syncDailySchedulesFromForecast();
+      if(plans[selectedDateStr]) hourlyData=plans[selectedDateStr];
+      updateCalculations();
+      renderPvCompare();
+    }
   }catch(e){ $('live-status').innerText=`⚠️ Błąd: ${e.message} (CORS / URL / ścieżka?)`; }
 }
 
