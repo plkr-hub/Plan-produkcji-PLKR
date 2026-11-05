@@ -772,12 +772,24 @@ function onDateManualChange(){ selectedDateStr=$('selected-date').value; loadDay
 function selectDayFromCard(d){ selectedDateStr=d; $('selected-date').value=d; loadDay(d); }
 
 // ---------- Pobieranie danych online ----------
+async function fetchWithTimeout(url,timeoutMs,responseType='json'){
+  const controller=new AbortController();
+  const timeout=setTimeout(()=>controller.abort(),timeoutMs);
+  try{
+    const response=await fetch(url,{signal:controller.signal});
+    if(!response.ok) throw new Error(`HTTP ${response.status}`);
+    return responseType==='text'?await response.text():await response.json();
+  }finally{
+    clearTimeout(timeout);
+  }
+}
+
 async function fetchAllOnlineData(){
   const st=$('status-text'); const notes=[];
   st.innerHTML='⏳ Pobieranie pogody (Open-Meteo), cen PSE RCE i gazu TGE...';
   try{
     const url=`https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}&hourly=shortwave_radiation,cloud_cover,temperature_2m&timezone=Europe%2FWarsaw&past_days=2&forecast_days=14`;
-    const j=await (await fetch(url)).json();
+    const j=await fetchWithTimeout(url,8000);
     if(j&&j.hourly){ processWeather(j.hourly); notes.push('✅ pogoda Open-Meteo'); }
   }catch(e){ notes.push('⚠️ pogoda: model zapasowy'); ensureForecast(); }
   ensureForecast();
@@ -831,12 +843,11 @@ function estimatePrices(d,sunny=0.5){
 
 let publishedPriceCache=null, publishedPriceCacheAt=0;
 async function loadPublishedPriceCache(force=false){
-  if(!force&&publishedPriceCache&&Date.now()-publishedPriceCacheAt<60000) return publishedPriceCache;
+  if(!force&&Date.now()-publishedPriceCacheAt<60000) return publishedPriceCache;
   try{
-    const res=await fetch(`prices.json?ts=${Date.now()}`,{cache:'no-store'});
-    if(!res.ok) throw new Error('HTTP '+res.status);
-    publishedPriceCache=await res.json(); publishedPriceCacheAt=Date.now();
+    publishedPriceCache=await fetchWithTimeout(`prices.json?ts=${Date.now()}`,6000);
   }catch(e){ publishedPriceCache=null; }
+  publishedPriceCacheAt=Date.now();
   return publishedPriceCache;
 }
 
@@ -954,12 +965,13 @@ async function fetchGasTGE(){
   routes.push({n:'corsproxy.io',u:'https://corsproxy.io/?url='+encodeURIComponent(pages[0])});
   routes.push({n:'allorigins',u:'https://api.allorigins.win/raw?url='+encodeURIComponent(pages[0])});
   routes.push({n:'codetabs',u:'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(pages[0])});
+  const deadline=Date.now()+8000;
   for(const r of routes){
+    const remaining=deadline-Date.now();
+    if(remaining<=0) break;
     try{
-      const ctl=new AbortController(); const to=setTimeout(()=>ctl.abort(),8000);
-      const res=await fetch(r.u,{signal:ctl.signal}); clearTimeout(to);
-      if(!res.ok) continue;
-      const v=parseGasFromText(await res.text());
+      const text=await fetchWithTimeout(r.u,remaining,'text');
+      const v=parseGasFromText(text);
       if(v){ $('gas-tge-mwh').value=v; lsSet('energyplaner_gas_last',{v,ts:Date.now(),src:r.n}); return {msg:`✅ gaz TGE: ${v} zł/MWh (${r.n})`}; }
     }catch(e){}
   }
