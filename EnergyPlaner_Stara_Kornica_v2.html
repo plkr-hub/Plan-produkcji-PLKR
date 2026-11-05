@@ -185,6 +185,24 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
       <label title="Lokalny proxy (proxy.js) omija blokadę CORS">Proxy: <input type="text" id="gas-proxy-url" value="http://localhost:8787" style="width:150px"></label>
       <button onclick="refreshGasOnly()">🔥 Pobierz gaz TGE</button>
     </div>
+    <div class="param-group" style="width:100%;align-items:flex-start">
+      <strong style="color:var(--primary)">⚡ OPŁATA MOCOWA:</strong>
+      <label><input type="checkbox" id="capacity-fee-enabled" checked style="width:auto" onchange="onCapacityFeeChange()"> Uwzględnij</label>
+      <label>2026 (zł/kWh) <input type="number" id="capacity-fee-2026" min="0" step="0.0001" value="0.2194" oninput="onCapacityFeeChange()"></label>
+      <label>2027 I kw. <input type="number" id="capacity-fee-2027-q1" min="0" step="0.0001" value="0.1925" oninput="onCapacityFeeChange()"></label>
+      <label>II kw. <input type="number" id="capacity-fee-2027-q2" min="0" step="0.0001" value="0.2141" oninput="onCapacityFeeChange()"></label>
+      <label>III kw. <input type="number" id="capacity-fee-2027-q3" min="0" step="0.0001" value="0.1984" oninput="onCapacityFeeChange()"></label>
+      <label>IV kw. <input type="number" id="capacity-fee-2027-q4" min="0" step="0.0001" value="0.1950" oninput="onCapacityFeeChange()"></label>
+      <label>Inne lata (zł/kWh) <input type="number" id="capacity-fee-other" min="0" step="0.0001" value="0" oninput="onCapacityFeeChange()"></label>
+      <span style="width:100%;border-top:1px solid #bae6fd;padding-top:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+        <strong>Godziny naliczania (edytowalne):</strong>
+        <label>od <input type="number" id="capacity-fee-start" min="0" max="23" step="1" value="7" oninput="onCapacityFeeChange()">:00</label>
+        <label>do <input type="number" id="capacity-fee-end" min="1" max="24" step="1" value="22" oninput="onCapacityFeeChange()">:00</label>
+        <label><input type="checkbox" id="capacity-fee-weekdays" checked style="width:auto" onchange="onCapacityFeeChange()"> tylko pon.–pt.</label>
+      </span>
+      <span class="note" id="capacity-fee-status" style="width:100%" role="status"></span>
+      <span class="note" style="width:100%">Domyślnie: dni robocze 7:00–22:00; zakres można zmienić zgodnie z umową/taryfą. Święta nie są automatycznie wyłączane. Stawka jest doliczana tylko do kWh pobranych z sieci w wybranych godzinach. Wartości są zapisywane lokalnie w tej przeglądarce. Zapisane wcześniej statystyki pozostają bez zmian.</span>
+    </div>
     <div class="param-group">
       <label><input type="checkbox" id="force-targets" checked style="width:auto" onchange="autoOptimizeSchedule()"> Wymuś realizację celów dobowych (uzupełnij najtańszymi godzinami)</label>
     </div>
@@ -204,7 +222,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
 
 <div class="panel">
   <h3 style="margin-bottom:8px">🧮 Zużycie energii wg produktu (wybrana doba)</h3>
-  <div class="scroll"><table><thead><tr><th>Produkt</th><th>Godz. pracy</th><th>Produkcja (t)</th><th>Zużycie prądu (kWh)</th><th>Z sieci (kWh)</th><th>Gaz (m³)</th><th>Koszt prądu</th><th>Koszt gazu</th><th>Koszt razem</th><th>zł/t</th><th>kWh prądu/t</th><th>m³ gazu/t</th></tr></thead><tbody id="product-day-body"></tbody></table></div>
+  <div class="scroll"><table><thead><tr><th>Produkt</th><th>Godz. pracy</th><th>Produkcja (t)</th><th>Zużycie prądu (kWh)</th><th>Z sieci (kWh)</th><th>Gaz (m³)</th><th>Koszt prądu (w tym opłata mocowa)</th><th>Koszt gazu</th><th>Koszt razem</th><th>zł/t</th><th>kWh prądu/t</th><th>m³ gazu/t</th></tr></thead><tbody id="product-day-body"></tbody></table></div>
 </div>
 
 <div class="panel">
@@ -226,7 +244,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
     </div>
   </div>
   <div class="scroll"><table>
-    <thead><tr><th>Godz.</th><th>Zmiana</th><th>Pogoda</th><th>☀️ PV (kWh)</th><th>⚡ Cena (zł/MWh)</th><th>Rekomendacja</th><th>Produkt 1</th><th>t</th><th>Produkt 2</th><th>t</th><th>Zużycie (kWh)</th><th>Z sieci (kWh)</th><th>Gaz (m³)</th><th>Koszt (zł)</th></tr></thead>
+    <thead><tr><th>Godz.</th><th>Zmiana</th><th>Pogoda</th><th>☀️ PV (kWh)</th><th>⚡ Cena (zł/MWh)</th><th>Rekomendacja</th><th>Produkt 1</th><th>t</th><th>Produkt 2</th><th>t</th><th>Zużycie (kWh)</th><th>Z sieci (kWh)</th><th>Gaz (m³)</th><th>Opłata mocowa (zł)</th><th>Koszt razem (zł)</th></tr></thead>
     <tbody id="hourly-table-body"></tbody>
   </table></div>
 </div>
@@ -481,8 +499,12 @@ function buildProductParams(){
 function restoreUserParams(){
   const saved=lsGet(LS_PARAMS,{});
   ['pv-peak-power','max-price-threshold','load-standby','elec-extra','gas-tge-mwh','gas-extra','gas-standby',
+    'capacity-fee-2026','capacity-fee-2027-q1','capacity-fee-2027-q2','capacity-fee-2027-q3','capacity-fee-2027-q4',
+    'capacity-fee-other','capacity-fee-start','capacity-fee-end',
     ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])]
     .forEach(id=>{ if(saved[id]!==undefined) $(id).value=saved[id]; });
+  if(typeof saved.capacityFeeEnabled==='boolean') $('capacity-fee-enabled').checked=saved.capacityFeeEnabled;
+  if(typeof saved.capacityFeeWeekdays==='boolean') $('capacity-fee-weekdays').checked=saved.capacityFeeWeekdays;
   if(Number(saved['p-rate-calcipril'])===1) $('p-rate-calcipril').value=PROD_META.calcipril.rate;
   if(Number(saved['p-rate-granucal'])===0.8) $('p-rate-granucal').value=PROD_META.granucal.rate;
   if(typeof saved.forceTargets==='boolean') $('force-targets').checked=saved.forceTargets;
@@ -490,8 +512,12 @@ function restoreUserParams(){
 function persistUserParams(){
   try{
     const ids=['pv-peak-power','max-price-threshold','load-standby','elec-extra','gas-tge-mwh','gas-extra','gas-standby',
+      'capacity-fee-2026','capacity-fee-2027-q1','capacity-fee-2027-q2','capacity-fee-2027-q3','capacity-fee-2027-q4',
+      'capacity-fee-other','capacity-fee-start','capacity-fee-end',
       ...PROD_IDS.flatMap(id=>['p-rate-'+id,'p-el-'+id,'p-gas-'+id,'p-target-'+id])];
     const saved={}; ids.forEach(id=>saved[id]=$(id).value); saved.forceTargets=$('force-targets').checked;
+    saved.capacityFeeEnabled=$('capacity-fee-enabled').checked;
+    saved.capacityFeeWeekdays=$('capacity-fee-weekdays').checked;
     localStorage.setItem(LS_PARAMS,JSON.stringify(saved));
   }catch(e){}
 }
@@ -664,10 +690,34 @@ function getParams(){
   const products={};
   PROD_IDS.forEach(id=>products[id]={rate:num('p-rate-'+id,1),el:num('p-el-'+id,100),gas:num('p-gas-'+id,50),target:num('p-target-'+id,0)});
   const gasTge=num('gas-tge-mwh',195.5), gasExtra=num('gas-extra',0);
+  const capacityFeeRates={
+    '2026':Math.max(0,num('capacity-fee-2026',0.2194)),
+    '2027-q1':Math.max(0,num('capacity-fee-2027-q1',0.1925)),
+    '2027-q2':Math.max(0,num('capacity-fee-2027-q2',0.2141)),
+    '2027-q3':Math.max(0,num('capacity-fee-2027-q3',0.1984)),
+    '2027-q4':Math.max(0,num('capacity-fee-2027-q4',0.1950)),
+    other:Math.max(0,num('capacity-fee-other',0))
+  };
   return {products,standbyEl:num('load-standby',45),standbyGas:num('gas-standby',35),maxPrice:num('max-price-threshold',800),
     pvKwp:num('pv-peak-power',500),gasTge,gasExtra,elecExtra:num('elec-extra',0),
+    capacityFeeEnabled:$('capacity-fee-enabled').checked,capacityFeeRates,
+    capacityFeeStart:Math.max(0,Math.min(23,Math.floor(num('capacity-fee-start',7)))),
+    capacityFeeEnd:Math.max(0,Math.min(24,Math.floor(num('capacity-fee-end',22)))),
+    capacityFeeWeekdays:$('capacity-fee-weekdays').checked,
     gasM3Price:(gasTge+gasExtra)/1000*GAS_CONV, force:$('force-targets').checked};
 }
+function capacityFeeRateForDate(date,P){
+  if(!P.capacityFeeEnabled) return 0;
+  const [year,month]=String(date||'').split('-').map(Number);
+  if(year===2026) return P.capacityFeeRates['2026'];
+  if(year===2027&&month>=1&&month<=12) return P.capacityFeeRates[`2027-q${Math.ceil(month/3)}`];
+  return P.capacityFeeRates.other;
+}
+function isCapacityFeeHour(date,hour,P){
+  if(!date||!P.capacityFeeEnabled||P.capacityFeeStart>=P.capacityFeeEnd||hour<P.capacityFeeStart||hour>=P.capacityFeeEnd) return false;
+  return !P.capacityFeeWeekdays||![0,6].includes(dateObj(date).getDay());
+}
+function onCapacityFeeChange(){ autoOptimizeSchedule(); }
 
 // ---------- Dni ----------
 function setDayOffset(o){
@@ -932,6 +982,7 @@ function recalcPVAndRender(){
 function refreshEnv(rows,d){
   const kWp=num('pv-peak-power',500); const di=weekForecast[d];
   rows.forEach(r=>{
+    r.date=d;
     const w=(di&&di.hours[r.hour])||{irrWm2:0,cloudPct:50,tempC:10};
     const pv=pvFor(d,r.hour,w,kWp);
     r.irrWm2=w.irrWm2; r.cloudPct=w.cloudPct; r.tempC=w.tempC; r.pvKwh=pv.v; r.pvSrc=pv.src;
@@ -991,9 +1042,9 @@ function optimizeRows(rows,P){
   rows.forEach(r=>{r.p1='';r.p2='';r.q1=0;r.q2=0;r.task='Postój ekonomiczny';});
   const need={}; PROD_IDS.forEach(id=>need[id]=Math.max(0,P.products[id].target));
   const avgEl=PROD_IDS.reduce((a,id)=>a+P.products[id].el,0)/PROD_IDS.length;
-  const score=r=>(r.priceMWh+P.elecExtra)*Math.max(0.02,1-r.pvKwh/(P.standbyEl+avgEl));
+  const score=r=>(r.priceMWh+P.elecExtra+capacityFeeRateForDate(r.date,P)*1000*(isCapacityFeeHour(r.date,r.hour,P)?1:0))*Math.max(0.02,1-r.pvKwh/(P.standbyEl+avgEl));
   const order=rows.slice().sort((a,b)=>score(a)-score(b));
-  const isGood=r=>r.priceMWh<=P.maxPrice||r.pvKwh>=avgEl*0.45;
+  const isGood=r=>r.priceMWh+P.elecExtra+capacityFeeRateForDate(r.date,P)*1000*(isCapacityFeeHour(r.date,r.hour,P)?1:0)<=P.maxPrice||r.pvKwh>=avgEl*0.45;
   const assign=r=>{
     const cand=PROD_IDS.filter(id=>need[id]>0.001).sort((a,b)=>need[b]/P.products[b].rate-need[a]/P.products[a].rate).slice(0,2);
     cand.forEach((id,i)=>{
@@ -1027,27 +1078,29 @@ function calcRows(rows,P){
     r.demandKwh=+el.toFixed(2); r.gasKwh=+gas.toFixed(2);
     r.pvSelf=Math.min(r.demandKwh,r.pvKwh); r.pvExport=Math.max(0,r.pvKwh-r.demandKwh); r.gridKwh=+(r.demandKwh-r.pvSelf).toFixed(2);
     r.unitPrice=r.priceMWh+P.elecExtra;
-    r.elecCost=(r.gridKwh/1000)*r.unitPrice;
+    r.capacityFeeRate=isCapacityFeeHour(r.date||selectedDateStr,r.hour,P)?capacityFeeRateForDate(r.date||selectedDateStr,P):0;
+    r.capacityFeeCost=r.gridKwh*r.capacityFeeRate;
+    r.elecCost=(r.gridKwh/1000)*r.unitPrice+r.capacityFeeCost;
     r.gasM3=r.gasKwh/GAS_CONV; r.gasCost=r.gasM3*P.gasM3Price;
     r.totalCost=r.elecCost+r.gasCost;
     r.qty=(r.alloc[r.p1]?r.alloc[r.p1].qty:0)+((r.p2&&r.p2!==r.p1&&r.alloc[r.p2])?r.alloc[r.p2].qty:0);
-    r.isRecommended=r.priceMWh<=P.maxPrice||r.pvKwh>=(PROD_IDS.reduce((a,id)=>a+P.products[id].el,0)/3)*0.45;
-    Object.keys(r.alloc).forEach(k=>{const a=r.alloc[k]; const s=a.el/r.demandKwh; a.grid=r.gridKwh*s; a.elecCost=r.elecCost*s; a.gasM3=a.gas/GAS_CONV; a.gasCost=a.gasM3*P.gasM3Price; a.cost=a.elecCost+a.gasCost; a.pv=r.pvSelf*s;});
+    r.isRecommended=(r.priceMWh+P.elecExtra+r.capacityFeeRate*1000)<=P.maxPrice||r.pvKwh>=(PROD_IDS.reduce((a,id)=>a+P.products[id].el,0)/3)*0.45;
+    Object.keys(r.alloc).forEach(k=>{const a=r.alloc[k]; const s=a.el/r.demandKwh; a.grid=r.gridKwh*s; a.capacityFeeCost=r.capacityFeeCost*s; a.elecCost=r.elecCost*s; a.gasM3=a.gas/GAS_CONV; a.gasCost=a.gasM3*P.gasM3Price; a.cost=a.elecCost+a.gasCost; a.pv=r.pvSelf*s;});
   });
 }
 
 // Buduje rekord statystyczny z wierszy
 function buildRecord(rows,P,d){
-  const rec={date:d,pv:0,pvSelf:0,pvExport:0,demand:0,grid:0,elecCost:0,gasM3:0,gasCost:0,totalCost:0,qty:0,
+  const rec={date:d,pv:0,pvSelf:0,pvExport:0,demand:0,grid:0,elecCost:0,capacityFeeCost:0,gasM3:0,gasCost:0,totalCost:0,qty:0,
     pvActualHours:0,shifts:{1:{},2:{},3:{}},products:{}};
-  [1,2,3].forEach(s=>rec.shifts[s]={hours:0,prodHours:0,pv:0,demand:0,grid:0,gasM3:0,elecCost:0,gasCost:0,cost:0,qty:0});
-  ['standby',...PROD_IDS].forEach(k=>rec.products[k]={hours:0,qty:0,el:0,grid:0,gasM3:0,elecCost:0,gasCost:0,cost:0});
+  [1,2,3].forEach(s=>rec.shifts[s]={hours:0,prodHours:0,pv:0,demand:0,grid:0,gasM3:0,elecCost:0,capacityFeeCost:0,gasCost:0,cost:0,qty:0});
+  ['standby',...PROD_IDS].forEach(k=>rec.products[k]={hours:0,qty:0,el:0,grid:0,gasM3:0,elecCost:0,capacityFeeCost:0,gasCost:0,cost:0});
   rows.forEach(r=>{
     rec.pv+=r.pvKwh; rec.pvSelf+=r.pvSelf; rec.pvExport+=r.pvExport; rec.demand+=r.demandKwh; rec.grid+=r.gridKwh;
-    rec.elecCost+=r.elecCost; rec.gasM3+=r.gasM3; rec.gasCost+=r.gasCost; rec.totalCost+=r.totalCost; rec.qty+=r.qty;
+    rec.elecCost+=r.elecCost; rec.capacityFeeCost+=r.capacityFeeCost; rec.gasM3+=r.gasM3; rec.gasCost+=r.gasCost; rec.totalCost+=r.totalCost; rec.qty+=r.qty;
     if(r.pvSrc==='rzecz.') rec.pvActualHours++;
-    const s=rec.shifts[r.shiftId]; s.hours++; if(r.qty>0) s.prodHours++; s.pv+=r.pvKwh; s.demand+=r.demandKwh; s.grid+=r.gridKwh; s.gasM3+=r.gasM3; s.elecCost+=r.elecCost; s.gasCost+=r.gasCost; s.cost+=r.totalCost; s.qty+=r.qty;
-    Object.keys(r.alloc).forEach(k=>{ const a=r.alloc[k],t=rec.products[k]; t.hours+=(k==='standby'?1:1); t.qty+=a.qty; t.el+=a.el; t.grid+=a.grid; t.gasM3+=a.gasM3; t.elecCost+=a.elecCost; t.gasCost+=a.gasCost; t.cost+=a.cost; });
+    const s=rec.shifts[r.shiftId]; s.hours++; if(r.qty>0) s.prodHours++; s.pv+=r.pvKwh; s.demand+=r.demandKwh; s.grid+=r.gridKwh; s.gasM3+=r.gasM3; s.elecCost+=r.elecCost; s.capacityFeeCost+=r.capacityFeeCost; s.gasCost+=r.gasCost; s.cost+=r.totalCost; s.qty+=r.qty;
+    Object.keys(r.alloc).forEach(k=>{ const a=r.alloc[k],t=rec.products[k]; t.hours+=(k==='standby'?1:1); t.qty+=a.qty; t.el+=a.el; t.grid+=a.grid; t.gasM3+=a.gasM3; t.elecCost+=a.elecCost; t.capacityFeeCost+=a.capacityFeeCost; t.gasCost+=a.gasCost; t.cost+=a.cost; });
   });
   rec.pvSource=rec.pvActualHours>=20?'rzeczywiste':(rec.pvActualHours>0?'mieszane':'prognoza');
   rec.priceSource=weekForecast[d]&&weekForecast[d].isOfficialPSE?'PSE':'szac.';
@@ -1068,7 +1121,12 @@ function updateCalculations(){
   $('stat-opt-hours').innerText=`${prodHours} h prod. / ${recH} h opt.`;
   $('stat-opt-sub').innerText=`Próg: ≤ ${P.maxPrice} zł/MWh lub mocne PV`;
   $('stat-elec-net').innerText=`${fmt(rec.grid)} kWh`;
-  $('stat-elec-cost').innerText=`${fmt(rec.elecCost,2)} zł (śr. ${fmt(rec.avgPrice,0)} zł/MWh)`;
+  $('stat-elec-cost').innerText=`${fmt(rec.elecCost,2)} zł (w tym opłata mocowa ${fmt(rec.capacityFeeCost,2)} zł; śr. ${fmt(rec.avgPrice,0)} zł/MWh)`;
+  const rate=capacityFeeRateForDate(selectedDateStr,P);
+  const periodRate=rate.toLocaleString('pl-PL',{minimumFractionDigits:4,maximumFractionDigits:4});
+  $('capacity-fee-status').textContent=P.capacityFeeEnabled
+    ? `Wybrana doba ${selectedDateStr}: ${periodRate} zł/kWh (${fmt(rate*1000,2)} zł/MWh); naliczanie ${P.capacityFeeStart}:00–${P.capacityFeeEnd}:00${P.capacityFeeWeekdays?' w dni robocze':''}.`
+    : 'Opłata mocowa wyłączona.';
   $('stat-gas-total').innerText=`${fmt(rec.gasM3)} m³`;
   $('stat-gas-cost').innerText=`${fmt(rec.gasCost,2)} zł (${P.gasM3Price.toFixed(2)} zł/m³)`;
   $('stat-total-prod').innerText=`${fmt(rec.qty,2)} t`;
@@ -1140,7 +1198,8 @@ function renderHourlyTable(P){
   const opts=sel=>`<option value="" ${!sel?'selected':''}>— brak —</option>`+PROD_IDS.map(id=>`<option value="${id}" ${sel===id?'selected':''}>${PROD_META[id].name}</option>`).join('');
   $('hourly-table-body').innerHTML=hourlyData.map((r,i)=>{
     const lbl=`${String(r.hour).padStart(2,'0')}:00-${String((r.hour+1)%24).padStart(2,'0')}:00`;
-    const cheap=r.priceMWh<=P.maxPrice, boom=r.pvKwh>=120;
+    const effectivePrice=r.priceMWh+P.elecExtra+r.capacityFeeRate*1000;
+    const cheap=effectivePrice<=P.maxPrice, boom=r.pvKwh>=120;
     let cls='row-expensive',badge=`<span class="day-badge badge-red">DROGO</span>`;
     if(cheap){cls='row-optimal';badge=`<span class="day-badge badge-green">TANIO</span>`;} else if(boom){cls='row-solar-boom';badge=`<span class="day-badge badge-yellow">PV ${fmt(r.pvKwh,0)}</span>`;}
     const wi=r.irrWm2>350?'☀️':r.irrWm2>80?'⛅':r.irrWm2>0?'☁️':'🌙';
@@ -1152,7 +1211,7 @@ function renderHourlyTable(P){
       <td><select class="mode-select" onchange="onProdChange(${i},2,this.value)">${opts(r.p2)}</select></td>
       <td><input type="number" class="qty-input" value="${r.q2}" step="0.1" ${r.p2?'':'disabled'} oninput="onQtyChange(${i},2,this.value)"></td>
       <td>${fmt(r.demandKwh)}</td><td style="font-weight:700;color:${r.gridKwh===0?'var(--green)':'inherit'}">${fmt(r.gridKwh)}</td>
-      <td style="color:var(--gas)">${fmt(r.gasM3,2)}</td><td><strong>${fmt(r.totalCost,2)}</strong></td></tr>`;
+      <td style="color:var(--gas)">${fmt(r.gasM3,2)}</td><td>${fmt(r.capacityFeeCost,2)}</td><td><strong>${fmt(r.totalCost,2)}</strong></td></tr>`;
   }).join('');
 }
 function onProdChange(i,slot,val){
@@ -1627,7 +1686,8 @@ function planForecastProductionDay(rows,P){
     const loadAfter=loadBefore+P.products[id].el;
     const gridBefore=Math.max(0,loadBefore-row.pvKwh);
     const gridAfter=Math.max(0,loadAfter-row.pvKwh);
-    const electricityCost=(gridAfter-gridBefore)*(row.priceMWh+P.elecExtra)/1000;
+    const feeRate=isCapacityFeeHour(row.date,hour,P)?capacityFeeRateForDate(row.date,P):0;
+    const electricityCost=(gridAfter-gridBefore)*(row.priceMWh+P.elecExtra)/1000+(gridAfter-gridBefore)*feeRate;
     const gasCost=P.products[id].gas*(P.gasTge+P.gasExtra)/1000;
     return (electricityCost+gasCost)/P.products[id].rate;
   };
@@ -1635,7 +1695,8 @@ function planForecastProductionDay(rows,P){
     const row=rows[hour];
     const load=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
       +(selected[hour].has(product)?P.products[product].el:0),P.products[id].el);
-    return (row.priceMWh+P.elecExtra)*Math.max(0,load-row.pvKwh)/load<=P.maxPrice;
+    const feeRate=isCapacityFeeHour(row.date,hour,P)?capacityFeeRateForDate(row.date,P):0;
+    return (row.priceMWh+P.elecExtra+feeRate*1000)*Math.max(0,load-row.pvKwh)/load<=P.maxPrice;
   };
   const regularPriceAllowed=(hour,id)=>rows[hour].priceMWh<=P.maxPrice||pvCompensated(hour,id);
   const bridgePriceAllowed=(hour,id)=>rows[hour].priceMWh>P.maxPrice
@@ -1880,12 +1941,12 @@ function renderStats(){
     <div class="stat-card"><div class="stat-title">⚡ Pobór z sieci</div><div class="stat-value">${fmt((tot.grid||0)/1000,2)} MWh</div><div class="stat-sub">Zapotrzebowanie ${fmt((tot.demand||0)/1000,2)} MWh • śr. ${fmt(avgP,0)} zł/MWh</div></div>
     <div class="stat-card gas"><div class="stat-title">🔥 Gaz</div><div class="stat-value">${fmt(tot.gasM3||0,0)} m³</div><div class="stat-sub">Koszt ${fmt(tot.gasCost||0,2)} zł</div></div>
     <div class="stat-card prod"><div class="stat-title">🏭 Produkcja</div><div class="stat-value">${fmt(tot.qty||0,1)} t</div><div class="stat-sub">${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt((tot.products&&tot.products[id]?tot.products[id].qty:0),1)} t`).join(' • ')}</div></div>
-    <div class="stat-card purple"><div class="stat-title">💰 Koszt energii</div><div class="stat-value">${fmt(tot.totalCost||0,2)} zł</div><div class="stat-sub">Prąd ${fmt(tot.elecCost||0,2)} + gaz ${fmt(tot.gasCost||0,2)} • ${fmt(uc,2)} zł/t</div></div>
+    <div class="stat-card purple"><div class="stat-title">💰 Koszt energii</div><div class="stat-value">${fmt(tot.totalCost||0,2)} zł</div><div class="stat-sub">Prąd ${fmt(tot.elecCost||0,2)} (opłata mocowa ${fmt(tot.capacityFeeCost||0,2)}) + gaz ${fmt(tot.gasCost||0,2)} • ${fmt(uc,2)} zł/t</div></div>
     <div class="stat-card green"><div class="stat-title">📉 Intensywność energii</div><div class="stat-value">${tot.qty>0?fmt(tot.demand/tot.qty,0):'–'} kWh/t</div><div class="stat-sub">Gaz: ${tot.qty>0?fmt(tot.gasM3/tot.qty,1):'–'} m³/t</div></div>`;
 
   // Tabela główna
-  $('stats-main-head').innerHTML=`<tr><th>Okres</th><th>Dób</th><th>☀️ PV kWh</th><th>Z sieci kWh</th><th>Śr. cena zł/MWh</th><th>Gaz m³</th>${PROD_IDS.map(id=>`<th>${PROD_META[id].name} t</th>`).join('')}<th>Koszt prądu</th><th>Koszt gazu</th><th>Razem zł</th><th>zł/t</th></tr>`;
-  const mainRow=(label,g,cls='')=>{ const ap=g.grid>0?g.elecCost/(g.grid/1000):0; return `<tr class="${cls}"><td><strong>${label}</strong></td><td>${g.days||0}</td><td>${fmt(g.pv,0)}</td><td>${fmt(g.grid,0)}</td><td>${fmt(ap,0)}</td><td>${fmt(g.gasM3,0)}</td>${PROD_IDS.map(id=>`<td>${fmt(g.products&&g.products[id]?g.products[id].qty:0,2)}</td>`).join('')}<td>${fmt(g.elecCost,2)}</td><td>${fmt(g.gasCost,2)}</td><td><strong>${fmt(g.totalCost,2)}</strong></td><td>${g.qty>0?fmt(g.totalCost/g.qty,2):'–'}</td></tr>`; };
+  $('stats-main-head').innerHTML=`<tr><th>Okres</th><th>Dób</th><th>☀️ PV kWh</th><th>Z sieci kWh</th><th>Śr. cena zł/MWh</th><th>Gaz m³</th>${PROD_IDS.map(id=>`<th>${PROD_META[id].name} t</th>`).join('')}<th>Opłata mocowa</th><th>Koszt prądu</th><th>Koszt gazu</th><th>Razem zł</th><th>zł/t</th></tr>`;
+  const mainRow=(label,g,cls='')=>{ const ap=g.grid>0?g.elecCost/(g.grid/1000):0; return `<tr class="${cls}"><td><strong>${label}</strong></td><td>${g.days||0}</td><td>${fmt(g.pv,0)}</td><td>${fmt(g.grid,0)}</td><td>${fmt(ap,0)}</td><td>${fmt(g.gasM3,0)}</td>${PROD_IDS.map(id=>`<td>${fmt(g.products&&g.products[id]?g.products[id].qty:0,2)}</td>`).join('')}<td>${fmt(g.capacityFeeCost||0,2)}</td><td>${fmt(g.elecCost,2)}</td><td>${fmt(g.gasCost,2)}</td><td><strong>${fmt(g.totalCost,2)}</strong></td><td>${g.qty>0?fmt(g.totalCost/g.qty,2):'–'}</td></tr>`; };
   $('stats-main-body').innerHTML=groups.length?groups.map(g=>mainRow(periodLabel(g),g)).join('')+mainRow('SUMA',{...tot,days},'row-total'):`<tr><td colspan="14" class="note" style="padding:14px">Brak danych. Użyj „💾 Zapisz dobę" lub „📅 Zaplanuj i zapisz 7 dni".</td></tr>`;
 
   // Zmiany
@@ -1907,13 +1968,13 @@ function renderStats(){
 
 function exportStatsCSV(){
   const groups=aggregate(); const sep=';';
-  let csv=['Okres','Dób','PV_kWh','Z_sieci_kWh','Gaz_m3',...PROD_IDS.map(i=>PROD_META[i].name+'_t'),'Zm_I_grid_kWh','Zm_II_grid_kWh','Zm_III_grid_kWh','Koszt_pradu','Koszt_gazu','Razem'].join(sep)+'\n';
-  groups.forEach(g=>{ csv+=[g.key,g.days,g.pv,g.grid,g.gasM3,...PROD_IDS.map(i=>g.products&&g.products[i]?g.products[i].qty:0),g.shifts[1].grid,g.shifts[2].grid,g.shifts[3].grid,g.elecCost,g.gasCost,g.totalCost].map(v=>typeof v==='number'?String(+v.toFixed(2)).replace('.',','):v).join(sep)+'\n'; });
+  let csv=['Okres','Dób','PV_kWh','Z_sieci_kWh','Gaz_m3',...PROD_IDS.map(i=>PROD_META[i].name+'_t'),'Zm_I_grid_kWh','Zm_II_grid_kWh','Zm_III_grid_kWh','Oplata_mocowa','Koszt_pradu','Koszt_gazu','Razem'].join(sep)+'\n';
+  groups.forEach(g=>{ csv+=[g.key,g.days,g.pv,g.grid,g.gasM3,...PROD_IDS.map(i=>g.products&&g.products[i]?g.products[i].qty:0),g.shifts[1].grid,g.shifts[2].grid,g.shifts[3].grid,g.capacityFeeCost||0,g.elecCost,g.gasCost,g.totalCost].map(v=>typeof v==='number'?String(+v.toFixed(2)).replace('.',','):v).join(sep)+'\n'; });
   dl(csv,`Statystyki_${statsView}_Stara_Kornica.csv`);
 }
 function exportScheduleCSV(){
-  let csv='Godzina;Zmiana;PV_kWh;Cena_zl_MWh;Produkt1;t1;Produkt2;t2;Zuzycie_kWh;Z_sieci_kWh;Gaz_m3;Koszt_zl\n';
-  hourlyData.forEach(r=>{ csv+=`${r.hour}:00;${r.shiftName};${r.pvKwh};${r.priceMWh};${r.p1?PROD_META[r.p1].name:''};${r.q1};${r.p2?PROD_META[r.p2].name:''};${r.q2};${r.demandKwh};${r.gridKwh};${r2(r.gasM3)};${r2(r.totalCost)}\n`; });
+  let csv='Godzina;Zmiana;PV_kWh;Cena_zl_MWh;Produkt1;t1;Produkt2;t2;Zuzycie_kWh;Z_sieci_kWh;Gaz_m3;Oplata_mocowa_zl;Koszt_zl\n';
+  hourlyData.forEach(r=>{ csv+=`${r.hour}:00;${r.shiftName};${r.pvKwh};${r.priceMWh};${r.p1?PROD_META[r.p1].name:''};${r.q1};${r.p2?PROD_META[r.p2].name:''};${r.q2};${r.demandKwh};${r.gridKwh};${r2(r.gasM3)};${r2(r.capacityFeeCost)};${r2(r.totalCost)}\n`; });
   dl(csv,`Harmonogram_Stara_Kornica_${selectedDateStr}.csv`);
 }
 function dl(content,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['\ufeff'+content],{type:'text/csv;charset=utf-8;'})); a.download=name; a.click(); }
