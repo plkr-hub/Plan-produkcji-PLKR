@@ -141,7 +141,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
-  <p class="note">Wpisz stany, maksymalne pojemności oraz sumy zamówień w tonach. Plan rozkłada pozostałe zamówienia równomiernie na 14 dni, uwzględnia stan magazynu i planuje postój przy pełnym magazynie. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
+  <p class="note">Wpisz stany i maksymalne pojemności magazynów. Plan uwzględnia zamówienia Calciprilu/Granucalu oraz stan mączki: 1 t mączki na 6 t Calciprilu i 0,6 t na 6 t Granucalu. Mączka jest produkowana tylko na potrzeby zaplanowanych produktów, maksymalnie 40 t/dobę, z uwzględnieniem jej zapasu i pojemności magazynu. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
   <div class="inventory-grid" id="inventory-stock-inputs"></div>
   <div id="pickup-order-list"></div>
   <p class="note" id="pickup-order-status" role="status" style="margin-top:6px"></p>
@@ -536,7 +536,7 @@ function buildInventoryControls(){
   const saved=normalizeInventoryState(lsGet(LS_INVENTORY,{}));
   const container=$('inventory-stock-inputs');
   container.replaceChildren();
-  ['calcipril','granucal'].forEach(id=>{
+  PROD_IDS.forEach(id=>{
     const card=document.createElement('div');
     card.className='inventory-card';
     card.style.borderColor=PROD_META[id].color;
@@ -581,12 +581,20 @@ function normalizeInventoryState(saved){
       orders[id]=Number.isFinite(quantity)&&quantity>0?quantity:0;
     });
   }
+  const current={},maximum={};
+  PROD_IDS.forEach(id=>{
+    const stock=Number(saved.current?.[id]);
+    current[id]=Number.isFinite(stock)&&stock>=0?stock:0;
+    const maxText=String(saved.maximum?.[id]??'').trim();
+    const maxStock=Number(maxText);
+    maximum[id]=maxText===''?'':Number.isFinite(maxStock)&&maxStock>=0?maxStock:'';
+  });
   const received={calcipril:0,granucal:0};
   ['calcipril','granucal'].forEach(id=>{
     const quantity=Number(saved.received?.[id]);
     received[id]=Number.isFinite(quantity)&&quantity>0?quantity:0;
   });
-  return {...saved,orders,received};
+  return {...saved,current,maximum,orders,received};
 }
 
 function renderPickupOrders(saved){
@@ -626,9 +634,11 @@ function renderPickupOrders(saved){
 function readInventoryInputs(){
   const current={}, maximum={};
   const orders={}, received={};
-  ['calcipril','granucal'].forEach(id=>{
+  PROD_IDS.forEach(id=>{
     current[id]=$(`inventory-current-${id}`).value;
     maximum[id]=$(`inventory-max-${id}`).value;
+  });
+  ['calcipril','granucal'].forEach(id=>{
     orders[id]=$(`inventory-orders-${id}`).value;
     received[id]=$(`inventory-received-${id}`).value;
   });
@@ -677,13 +687,15 @@ function confirmPickupReceived(id){
 function getInventoryConfig(){
   const saved=readInventoryInputs();
   const current={}, maximum={}, orders={};
-  ['calcipril','granucal'].forEach(id=>{
+  PROD_IDS.forEach(id=>{
     const currentValue=Number(saved.current[id]);
-    const maxText=saved.maximum[id].trim();
+    const maxText=String(saved.maximum[id]??'').trim();
     const maxValue=Number(maxText);
-    const orderValue=Number(saved.orders[id]);
     current[id]=Number.isFinite(currentValue)&&currentValue>=0?currentValue:0;
     maximum[id]=maxText===''?null:Number.isFinite(maxValue)&&maxValue>=0?maxValue:null;
+  });
+  ['calcipril','granucal'].forEach(id=>{
+    const orderValue=Number(saved.orders[id]);
     orders[id]=Number.isFinite(orderValue)&&orderValue>0?orderValue:0;
   });
   return {current,maximum,orders};
@@ -1468,22 +1480,39 @@ function buildForecastProductionPlan(P=getParams()){
         target:fullBatchTarget(Math.min(target,room),room,P.products[id].rate),
         productionLimit:fullBatchTarget(productionLimit,room,P.products[id].rate)};
     });
+    const mealStock=projectedStock.maczka||0;
+    const mealMaximum=inventory.maximum.maczka??null;
+    const mealRows=rows.filter(row=>{
+      if(P.force) return Number.isFinite(row.priceMWh);
+      const feeRate=isCapacityFeeHour(date,row.hour,P)?capacityFeeRateForDate(date,P):0;
+      const load=P.standbyEl+P.products.maczka.el;
+      return Number.isFinite(row.priceMWh)
+        &&(row.priceMWh+P.elecExtra+feeRate*1000)*Math.max(0,load-row.pvKwh)/load<=P.maxPrice;
+    }).length;
+    dailyParams.rawMealStock=mealStock;
+    dailyParams.rawMealMaximum=mealMaximum;
+    dailyParams.rawMealDailyLimit=Math.min(40,P.products.maczka.rate*mealRows);
+    dailyParams.rawMealAvailable=mealStock+dailyParams.rawMealDailyLimit;
     planForecastProductionDay(rows,dailyParams);
     applyForecastHourOverrides(date,rows,dailyParams);
     calcRows(rows,dailyParams);
-    ['calcipril','granucal'].forEach(id=>{
-      const produced=rows.reduce((sum,row)=>sum
-        +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0);
+    const dailyProduced=Object.fromEntries(PROD_IDS.map(id=>[id,rows.reduce((sum,row)=>sum
+      +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0)]));
+    const mealUsed=dailyProduced.calcipril/6+dailyProduced.granucal*0.6/6;
+    PROD_IDS.forEach(id=>{
+      const produced=dailyProduced[id];
       const productCost=rows.reduce((sum,row)=>sum+(row.alloc?.[id]?.cost||0),0);
       const costPerTon=produced>0?productCost/produced:null;
-      const available=projectedStock[id]+produced;
+      const consumed=id==='maczka'?mealUsed:0;
+      const available=projectedStock[id]+produced-consumed;
       const hasOrders=inventory.orders[id]>0;
-      const demand=hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
-      const fulfilled=hasOrders?Math.min(demand,available):0;
-      const shortage=Math.max(0,demand-fulfilled);
+      const demand=id==='maczka'?mealUsed:hasOrders?remainingOrders[id]/(dates.length-dayIndex):0;
+      const fulfilled=id==='maczka'?0:hasOrders?Math.min(demand,projectedStock[id]+produced):0;
+      const shortage=id==='maczka'?Math.max(0,mealUsed-projectedStock[id]-produced)
+        :Math.max(0,demand-fulfilled);
       if(hasOrders) remainingOrders[id]=Math.max(0,remainingOrders[id]-fulfilled);
-      const ending=Math.max(0,available-fulfilled);
-      inventoryRows.push({date,id,start:projectedStock[id],produced,costPerTon,demand,fulfilled,
+      const ending=Math.max(0,available-(id==='maczka'?0:fulfilled));
+      inventoryRows.push({date,id,start:projectedStock[id]||0,produced,costPerTon,demand,fulfilled,consumed,
         remaining:remainingOrders[id],ending,shortage});
       projectedStock[id]=ending;
     });
@@ -1565,11 +1594,11 @@ function renderForecastProductionChart(P=getParams()){
   const belowThreshold=flattened.filter(row=>row.priceMWh<threshold).length;
   const pvAssisted=flattened.filter(row=>(row.p1||row.p2)&&row.priceMWh>=threshold&&row.pvKwh>=100).length;
   $('market-production-status').innerText=`Zaplanowano ${scheduledHours} godzin produkcji / ${belowThreshold} godzin z ceną < ${threshold} zł/MWh • PV wspiera produkcję także w ${pvAssisted} droższych godzinach • ${PROD_IDS.map(id=>`${PROD_META[id].name}: ${fmt(totalByProduct[id],1)} t`).join(' • ')}`;
-  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Prognozowany koszt (zł/t)</th><th>Przewidywane odbiory</th><th>Pozostałe zamówienie</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
+  $('inventory-forecast').innerHTML=`<table><thead><tr><th>Data</th><th>Produkt</th><th>Stan początkowy</th><th>Plan produkcji</th><th>Prognozowany koszt (zł/t)</th><th>Zużycie / odbiory</th><th>Pozostałe zamówienie</th><th>Stan końcowy</th><th>Status</th></tr></thead><tbody>${inventoryRows.map(item=>`<tr>
     <td>${item.date}</td><td style="color:${PROD_META[item.id].color};font-weight:700">${PROD_META[item.id].name}</td>
-    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${item.costPerTon===null?'–':`${fmt(item.costPerTon,2)} zł/t`}</td><td>${fmt(item.fulfilled,1)} t</td>
+    <td>${fmt(item.start,1)} t</td><td>${fmt(item.produced,1)} t</td><td>${item.costPerTon===null?'–':`${fmt(item.costPerTon,2)} zł/t`}</td><td>${fmt(item.id==='maczka'?item.consumed:item.fulfilled,1)} t</td>
     <td>${fmt(item.remaining,1)} t</td><td>${fmt(item.ending,1)} t</td>
-    <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t na odbiór`:inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
+    <td>${item.shortage>0?`Brak ${fmt(item.shortage,1)} t ${item.id==='maczka'?'mączki':'na odbiór'}`:item.id==='maczka'?(item.produced>0?'Produkcja pokrywa zużycie':'Zapas wystarczający'):inventory.maximum[item.id]!==null&&item.start>=inventory.maximum[item.id]?'Postój — magazyn pełny':'OK'}</td>
   </tr>`).join('')}</tbody></table>`;
 }
 
@@ -1732,12 +1761,18 @@ function planForecastProductionDay(rows,P){
   const requiredSlots=Object.fromEntries(PROD_IDS.map(id=>[
     id,target[id]>0?Math.ceil(target[id]/P.products[id].rate):0
   ]));
+  requiredSlots.maczka=0;
   const maxSlots=Object.fromEntries(PROD_IDS.map(id=>{
     const limit=P.products[id].productionLimit??target[id];
     return [id,limit>0?Math.floor((limit+1e-9)/P.products[id].rate):0];
   }));
+  maxSlots.maczka=0;
   const selectedSlots=Object.fromEntries(PROD_IDS.map(id=>[id,0]));
+  let mealUsed=0;
+  const mealProductionByHour=Array(rows.length).fill(0);
   const competing=new Set(['calcipril','granucal']);
+  const mealPerTon={calcipril:1/6,granucal:0.6/6};
+  const mealForProduct=id=>mealPerTon[id]*P.products[id].rate;
   const hourCost=(hour,id)=>{
     const row=rows[hour];
     const loadBefore=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
@@ -1766,13 +1801,18 @@ function planForecastProductionDay(rows,P){
     &&selected[hour].size<2
     &&!(competing.has(id)&&[...selected[hour]].some(other=>competing.has(other)));
 
-  const scheduleRequiredProduction=(isAllowed)=>{
-    while(PROD_IDS.some(id=>selectedSlots[id]<requiredSlots[id])){
+  const scheduleRequiredProduction=(productIds,isAllowed)=>{
+    while(productIds.some(id=>selectedSlots[id]<requiredSlots[id])){
       let best=null;
       rows.forEach((row,hour)=>{
-        PROD_IDS.forEach(id=>{
+        productIds.forEach(id=>{
           if(!Number.isFinite(row.priceMWh)||selectedSlots[id]>=requiredSlots[id]
             ||!isAllowed(hour,id)||!canAdd(hour,id)) return;
+          if(id!=='maczka'){
+            if(mealUsed+mealForProduct(id)>(P.rawMealAvailable||0)+1e-9) return;
+            if(mealUsed+mealForProduct(id)>(P.rawMealStock||0)+1e-9
+              &&(!canAdd(hour,'maczka')||!regularPriceAllowed(hour,'maczka'))) return;
+          }
           const score=hourCost(hour,id);
           const candidate={hour,id,score,rate:P.products[id].rate};
           if(!best||candidate.rate>best.rate
@@ -1782,10 +1822,33 @@ function planForecastProductionDay(rows,P){
       if(!best) break;
       selected[best.hour].add(best.id);
       selectedSlots[best.id]++;
+      if(best.id!=='maczka') mealUsed+=mealForProduct(best.id);
     }
   };
-  scheduleRequiredProduction(regularPriceAllowed);
-  if(P.force) scheduleRequiredProduction(()=>true);
+  scheduleRequiredProduction(['calcipril','granucal'],regularPriceAllowed);
+  if(P.force) scheduleRequiredProduction(['calcipril','granucal'],()=>true);
+
+  let mealBalance=P.rawMealStock||0, mealDailyTotal=0;
+  rows.forEach((row,hour)=>{
+    const consumption=[...selected[hour]]
+      .filter(id=>id==='calcipril'||id==='granucal')
+      .reduce((sum,id)=>sum+mealForProduct(id),0);
+    const shortage=Math.max(0,consumption-mealBalance);
+    const stockRoom=Number.isFinite(P.rawMealMaximum)
+      ?Math.max(0,P.rawMealMaximum-mealBalance+consumption)
+      :Infinity;
+    const production=Math.min(shortage,P.products.maczka.rate,stockRoom,
+      40-mealDailyTotal,P.rawMealDailyLimit||0);
+    mealProductionByHour[hour]=production;
+    mealBalance=Math.max(0,mealBalance+production-consumption);
+    mealDailyTotal+=production;
+  });
+  const mealProductionLimit=mealDailyTotal;
+  target.maczka=mealProductionLimit;
+  requiredSlots.maczka=mealProductionByHour.filter(quantity=>quantity>0).length;
+  maxSlots.maczka=requiredSlots.maczka;
+  scheduleRequiredProduction(['maczka'],(hour)=>mealProductionByHour[hour]>0
+    &&(P.force||regularPriceAllowed(hour,'maczka')));
 
   for(let hour=0;hour<rows.length;hour++){
     if(!selected[hour].size) continue;
@@ -1802,11 +1865,13 @@ function planForecastProductionDay(rows,P){
         .filter(id=>Number.isFinite(rows[fill].priceMWh)
           &&bridgePriceAllowed(fill,id)
           &&selectedSlots[id]<maxSlots[id]
-          &&canAdd(fill,id))
+          &&canAdd(fill,id)
+          &&(id==='maczka'||mealUsed+mealForProduct(id)<=(P.rawMealStock||0)+1e-9))
         .sort((a,b)=>hourCost(fill,a)-hourCost(fill,b));
       if(candidates.length){
         selected[fill].add(candidates[0]);
         selectedSlots[candidates[0]]++;
+        if(candidates[0]!=='maczka') mealUsed+=mealForProduct(candidates[0]);
       }
     }
   }
@@ -1815,12 +1880,10 @@ function planForecastProductionDay(rows,P){
     const products=[...selected[hour]];
     row.p1=products[0]||'';
     row.p2=products[1]||'';
-    row.q1=row.p1?(row.p1==='calcipril'||row.p1==='granucal'
-      ?P.products[row.p1].rate
-      :Math.min(P.products[row.p1].rate,target[row.p1]/selectedSlots[row.p1])):0;
-    row.q2=row.p2?(row.p2==='calcipril'||row.p2==='granucal'
-      ?P.products[row.p2].rate
-      :Math.min(P.products[row.p2].rate,target[row.p2]/selectedSlots[row.p2])):0;
+    row.q1=row.p1==='maczka'?mealProductionByHour[hour]
+      :row.p1?P.products[row.p1].rate:0;
+    row.q2=row.p2==='maczka'?mealProductionByHour[hour]
+      :row.p2?P.products[row.p2].rate:0;
     row.task=products.map(id=>PROD_META[id].name).join(' + ')||'Postój ekonomiczny';
   });
 }

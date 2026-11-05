@@ -15,4 +15,13 @@ nie aktualizuje wstecz wcześniej zapisanych statystyk.
 Pole **Limit ceny dla produkcji (zł/MWh)** w sekcji prądu można zmieniać przed
 planowaniem. Zmiana natychmiast przelicza harmonogram i zapisuje ustawienie lokalnie
 w przeglądarce. Limit uwzględnia dopłatę do prądu i opłatę mocową; włączone wymuszenie
-celów dobowych może mimo limitu zaplanować brakującą produkcję w droższych godzinach.
+produkcji może mimo limitu zaplanować pracę w droższych godzinach.
+
+## Plan 14-dniowy: mączka i produkty
+
+Plan godzinowy wybiera najpierw Calcipril lub Granucal według wydajności t/h,
+z uwzględnieniem limitu ceny, zamówień i maksymalnego stanu magazynu. Do produkcji
+6 t Calciprilu przyjmuje zużycie 1 t mączki, a do 6 t Granucalu — 0,6 t. Mączka
+jest planowana tylko w ilości potrzebnej do pokrycia tego zużycia, z limitem 40 t
+dziennie oraz własnym stanem i maksymalną pojemnością magazynu. Jej zapas jest
+przenoszony między kolejnymi dniami prognozy.
