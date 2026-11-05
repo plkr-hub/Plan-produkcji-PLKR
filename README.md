@@ -21,9 +21,10 @@ produkcji może mimo limitu zaplanować pracę w droższych godzinach.
 
 Plan godzinowy wybiera najpierw Calcipril lub Granucal według wydajności t/h,
 z uwzględnieniem limitu ceny, zamówień i maksymalnego stanu magazynu. Do produkcji
-domyślna wydajność obu linii wynosi 8 t/h. Każda godzina pracy zużywa domyślnie
-1 t mączki dla Calciprilu albo 0,6 t dla Granucalu; wydajność i zużycie mączki
-można zmieniać w sekcji „Parametry produktów”, a wartości są zapisywane lokalnie.
+domyślna wydajność obu linii wynosi 8 t/h. Na każdą tonę produktu przypada domyślnie
+0,2 t mączki dla Calciprilu albo 0,12 t dla Granucalu (przy 8 t/h daje to odpowiednio
+1,6 i 0,96 t mączki na godzinę pracy). Wydajność i współczynnik zużycia mączki można
+zmieniać w sekcji „Parametry produktów”, a wartości są zapisywane lokalnie.
 Mączka jest planowana tylko w ilości potrzebnej do pokrycia tego zużycia, z limitem
 40 t dziennie oraz własnym stanem i maksymalną pojemnością magazynu. Jej zapas jest
 przenoszony między kolejnymi dniami prognozy.

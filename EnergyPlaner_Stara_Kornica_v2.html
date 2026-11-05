@@ -141,7 +141,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
   <div class="chart-container"><canvas id="marketProductionChart"></canvas></div>
   <p class="note" id="market-production-status" style="margin-top:5px"></p>
   <h3 style="font-size:.95rem;margin:14px 0 6px">📦 Stany magazynowe i zamówienia odbioru</h3>
-  <p class="note">Wpisz stany i maksymalne pojemności magazynów. Plan uwzględnia zamówienia Calciprilu/Granucalu oraz zużycie mączki na godzinę pracy każdej linii (parametry można zmienić w sekcji „Parametry produktów”). Mączka jest produkowana tylko na potrzeby zaplanowanych produktów, maksymalnie 40 t/dobę, z uwzględnieniem jej zapasu i pojemności magazynu. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
+  <p class="note">Wpisz stany i maksymalne pojemności magazynów. Plan uwzględnia zamówienia Calciprilu/Granucalu oraz zużycie mączki na tonę produktu (parametry można zmienić w sekcji „Parametry produktów”). Mączka jest produkowana tylko na potrzeby zaplanowanych produktów, maksymalnie 40 t/dobę, z uwzględnieniem jej zapasu i pojemności magazynu. W polu „Odebrane” wpisz odebraną ilość i zatwierdź ✓ — zostanie odjęta od zamówienia, a pole wyzerowane. Puste maksimum oznacza brak limitu.</p>
   <div class="inventory-grid" id="inventory-stock-inputs"></div>
   <div id="pickup-order-list"></div>
   <p class="note" id="pickup-order-status" role="status" style="margin-top:6px"></p>
@@ -166,7 +166,7 @@ textarea{width:100%;height:100px;font-family:monospace;cursor:text;margin:6px 0 
     <span id="status-text">⏳ Pobieranie danych...</span>
     <span id="weather-live-badge" style="font-weight:700;color:#b45309;background:#fef3c7;padding:4px 10px;border-radius:6px">☀️ PV: ładowanie...</span>
   </div>
-  <div class="banner-row"><strong>🏭 Parametry produktów (wydajność i zużycie „ponad postój" jednej linii; stawki mączki dotyczą godziny pracy):</strong></div>
+  <div class="banner-row"><strong>🏭 Parametry produktów (wydajność i zużycie „ponad postój" jednej linii; mączka w tonach na tonę produktu):</strong></div>
   <div class="prod-params" id="prod-params"></div>
   <div class="banner-row">
     <div class="param-group">
@@ -367,8 +367,8 @@ const LAT = 52.1869, LON = 22.9469;
 const GAS_CONV = 10.972; // kWh/m3
 const PROD_IDS = ['calcipril','granucal','maczka'];
 const PROD_META = {
-  calcipril:{name:'Calcipril',color:'#9333ea',rate:8.0,mealRate:1.0,el:110,gas:75,target:10},
-  granucal:{name:'Granucal',color:'#0891b2',rate:8.0,mealRate:0.6,el:120,gas:85,target:8},
+  calcipril:{name:'Calcipril',color:'#9333ea',rate:8.0,mealRate:0.2,el:110,gas:75,target:10},
+  granucal:{name:'Granucal',color:'#0891b2',rate:8.0,mealRate:0.12,el:120,gas:85,target:8},
   maczka:{name:'Mączka',color:'#d97706',rate:1.2,el:80,gas:50,target:8}
 };
 const SHIFTS = {
@@ -497,7 +497,7 @@ function buildProductParams(){
     return `<div class="prod-box" style="border-color:${m.color}">
       <strong style="color:${m.color}">${m.name}</strong>
       <label>t/h <input type="number" id="p-rate-${id}" value="${m.rate}" step="0.1" oninput="onProdParamChange()"></label>
-      ${m.mealRate!==undefined?`<label>Mączka t/h <input type="number" id="p-meal-rate-${id}" value="${m.mealRate}" min="0" step="0.1" oninput="onProdParamChange()"></label>`:''}
+      ${m.mealRate!==undefined?`<label>Mączka t/t produktu <input type="number" id="p-meal-rate-${id}" value="${m.mealRate}" min="0" step="0.01" oninput="onProdParamChange()"></label>`:''}
       <label>kW prąd <input type="number" id="p-el-${id}" value="${m.el}" step="5" oninput="onProdParamChange()"></label>
       <label>kW gaz <input type="number" id="p-gas-${id}" value="${m.gas}" step="5" oninput="onProdParamChange()"></label>
       <label>Cel (t/dobę) <input type="number" id="p-target-${id}" value="${m.target}" step="1" oninput="onProdParamChange()"></label>
@@ -515,6 +515,8 @@ function restoreUserParams(){
     .forEach(id=>{ if(saved[id]!==undefined) $(id).value=saved[id]; });
   if(typeof saved.capacityFeeEnabled==='boolean') $('capacity-fee-enabled').checked=saved.capacityFeeEnabled;
   if(typeof saved.capacityFeeWeekdays==='boolean') $('capacity-fee-weekdays').checked=saved.capacityFeeWeekdays;
+  if(Number(saved['p-meal-rate-calcipril'])===1) $('p-meal-rate-calcipril').value=PROD_META.calcipril.mealRate;
+  if(Number(saved['p-meal-rate-granucal'])===0.6) $('p-meal-rate-granucal').value=PROD_META.granucal.mealRate;
   if([1,6].includes(Number(saved['p-rate-calcipril']))) $('p-rate-calcipril').value=PROD_META.calcipril.rate;
   if([0.8,6].includes(Number(saved['p-rate-granucal']))) $('p-rate-granucal').value=PROD_META.granucal.rate;
   if(typeof saved.forceTargets==='boolean') $('force-targets').checked=saved.forceTargets;
@@ -1502,7 +1504,7 @@ function buildForecastProductionPlan(P=getParams()){
     const dailyProduced=Object.fromEntries(PROD_IDS.map(id=>[id,rows.reduce((sum,row)=>sum
       +(row.p1===id?row.q1:0)+(row.p2===id?row.q2:0),0)]));
     const mealUsed=['calcipril','granucal'].reduce((sum,id)=>sum
-      +dailyProduced[id]/Math.max(P.products[id].rate,1e-9)*P.products[id].mealRate,0);
+      +dailyProduced[id]*P.products[id].mealRate,0);
     PROD_IDS.forEach(id=>{
       const produced=dailyProduced[id];
       const productCost=rows.reduce((sum,row)=>sum+(row.alloc?.[id]?.cost||0),0);
@@ -1775,7 +1777,7 @@ function planForecastProductionDay(rows,P){
   let mealUsed=0;
   const mealProductionByHour=Array(rows.length).fill(0);
   const competing=new Set(['calcipril','granucal']);
-  const mealForProduct=id=>P.products[id].mealRate||0;
+  const mealForProduct=id=>P.products[id].rate*(P.products[id].mealRate||0);
   const hourCost=(hour,id)=>{
     const row=rows[hour];
     const loadBefore=P.standbyEl+PROD_IDS.reduce((sum,product)=>sum
@@ -1831,22 +1833,65 @@ function planForecastProductionDay(rows,P){
   scheduleRequiredProduction(['calcipril','granucal'],regularPriceAllowed);
   if(P.force) scheduleRequiredProduction(['calcipril','granucal'],()=>true);
 
-  let mealBalance=P.rawMealStock||0, mealDailyTotal=0;
+  const mealDemandByHour=rows.map((row,hour)=>[...selected[hour]]
+    .filter(id=>id==='calcipril'||id==='granucal')
+    .reduce((sum,id)=>sum+mealForProduct(id),0));
+  let mealSchedule;
+  for(let attempt=0;attempt<=rows.length;attempt++){
+    const mealCapacityByHour=Array(rows.length).fill(0);
+    let mealBudget=Math.min(40,P.rawMealDailyLimit||0);
+    rows.forEach((row,hour)=>{
+      if(!Number.isFinite(row.priceMWh)||!canAdd(hour,'maczka')
+        ||(!P.force&&!regularPriceAllowed(hour,'maczka'))) return;
+      mealCapacityByHour[hour]=Math.min(P.products.maczka.rate,mealBudget);
+      mealBudget-=mealCapacityByHour[hour];
+    });
+    const mealStockNeeded=Array(rows.length+1).fill(0);
+    for(let hour=rows.length-1;hour>=0;hour--){
+      mealStockNeeded[hour]=Math.max(0,mealDemandByHour[hour]+mealStockNeeded[hour+1]
+        -mealCapacityByHour[hour]);
+      if(Number.isFinite(P.rawMealMaximum)){
+        mealStockNeeded[hour]=Math.min(mealStockNeeded[hour],P.rawMealMaximum);
+      }
+    }
+    let mealBalance=P.rawMealStock||0, mealDailyTotal=0, shortageHour=-1;
+    const productionByHour=Array(rows.length).fill(0);
+    rows.forEach((row,hour)=>{
+      const needed=mealDemandByHour[hour]+mealStockNeeded[hour+1];
+      const stockRoom=Number.isFinite(P.rawMealMaximum)
+        ?Math.max(0,P.rawMealMaximum-mealBalance+mealDemandByHour[hour])
+        :Infinity;
+      const production=Math.min(Math.max(0,needed-mealBalance),mealCapacityByHour[hour],
+        stockRoom,40-mealDailyTotal);
+      productionByHour[hour]=production;
+      mealBalance+=production-mealDemandByHour[hour];
+      if(mealBalance < -1e-9&&shortageHour<0) shortageHour=hour;
+      mealBalance=Math.max(0,mealBalance);
+      mealDailyTotal+=production;
+    });
+    mealSchedule={productionByHour,total:mealDailyTotal};
+    if(shortageHour<0||P.rawMealMaximum===0) break;
+    const product=[...selected[shortageHour]]
+      .find(id=>id==='calcipril'||id==='granucal');
+    if(!product) break;
+    const replacement=rows.findIndex((row,hour)=>hour>shortageHour
+      &&Number.isFinite(row.priceMWh)&&(P.force||regularPriceAllowed(hour,product))
+      &&canAdd(hour,product));
+    if(replacement<0) break;
+    selected[shortageHour].delete(product);
+    selected[replacement].add(product);
+    mealDemandByHour[shortageHour]-=mealForProduct(product);
+    mealDemandByHour[replacement]+=mealForProduct(product);
+  }
+  mealProductionByHour.splice(0,rows.length,...mealSchedule.productionByHour);
   rows.forEach((row,hour)=>{
-    const consumption=[...selected[hour]]
-      .filter(id=>id==='calcipril'||id==='granucal')
-      .reduce((sum,id)=>sum+mealForProduct(id),0);
-    const shortage=Math.max(0,consumption-mealBalance);
-    const stockRoom=Number.isFinite(P.rawMealMaximum)
-      ?Math.max(0,P.rawMealMaximum-mealBalance+consumption)
-      :Infinity;
-    const production=Math.min(shortage,P.products.maczka.rate,stockRoom,
-      40-mealDailyTotal,P.rawMealDailyLimit||0);
-    mealProductionByHour[hour]=production;
-    mealBalance=Math.max(0,mealBalance+production-consumption);
-    mealDailyTotal+=production;
+    const production=mealProductionByHour[hour];
+    if(production>0){
+      selected[hour].add('maczka');
+      selectedSlots.maczka++;
+    }
   });
-  const mealProductionLimit=mealDailyTotal;
+  const mealProductionLimit=mealSchedule.total;
   target.maczka=mealProductionLimit;
   requiredSlots.maczka=mealProductionByHour.filter(quantity=>quantity>0).length;
   maxSlots.maczka=requiredSlots.maczka;
