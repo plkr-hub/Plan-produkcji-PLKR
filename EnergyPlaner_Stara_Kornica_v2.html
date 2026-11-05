@@ -1761,22 +1761,26 @@ function planForecastProductionDay(rows,P){
     &&selected[hour].size<2
     &&!(competing.has(id)&&[...selected[hour]].some(other=>competing.has(other)));
 
-  while(PROD_IDS.some(id=>selectedSlots[id]<requiredSlots[id])){
-    let best=null;
-    rows.forEach((row,hour)=>{
-      PROD_IDS.forEach(id=>{
-        if(!Number.isFinite(row.priceMWh)||selectedSlots[id]>=requiredSlots[id]
-          ||!regularPriceAllowed(hour,id)||!canAdd(hour,id)) return;
-        const score=hourCost(hour,id);
-        const candidate={hour,id,score,priority:(requiredSlots[id]-selectedSlots[id])/requiredSlots[id]};
-        if(!best||candidate.score<best.score
-          ||(candidate.score===best.score&&candidate.priority>best.priority)) best=candidate;
+  const scheduleRequiredProduction=(isAllowed)=>{
+    while(PROD_IDS.some(id=>selectedSlots[id]<requiredSlots[id])){
+      let best=null;
+      rows.forEach((row,hour)=>{
+        PROD_IDS.forEach(id=>{
+          if(!Number.isFinite(row.priceMWh)||selectedSlots[id]>=requiredSlots[id]
+            ||!isAllowed(hour,id)||!canAdd(hour,id)) return;
+          const score=hourCost(hour,id);
+          const candidate={hour,id,score,priority:(requiredSlots[id]-selectedSlots[id])/requiredSlots[id]};
+          if(!best||candidate.score<best.score
+            ||(candidate.score===best.score&&candidate.priority>best.priority)) best=candidate;
+        });
       });
-    });
-    if(!best) break;
-    selected[best.hour].add(best.id);
-    selectedSlots[best.id]++;
-  }
+      if(!best) break;
+      selected[best.hour].add(best.id);
+      selectedSlots[best.id]++;
+    }
+  };
+  scheduleRequiredProduction(regularPriceAllowed);
+  if(P.force) scheduleRequiredProduction(()=>true);
 
   for(let hour=0;hour<rows.length;hour++){
     if(!selected[hour].size) continue;
